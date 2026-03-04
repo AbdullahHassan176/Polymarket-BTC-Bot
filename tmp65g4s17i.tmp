@@ -1,0 +1,37 @@
+{
+  "open_position": {
+    "open": true,
+    "mode": "PAPER",
+    "entry_time": "2026-03-04T00:11:33.795794+00:00",
+    "question": "Bitcoin Up or Down - March 3, 7:10PM-7:15PM ET",
+    "condition_id": "0xa6f0ec33f0b104f431c9b106b648d0dd5a19ce91e3c3b7d80baeeaaffe73c1d6",
+    "yes_token_id": "100451958109949790367880208976745563713553077212696870179029298920526400266105",
+    "no_token_id": "3644310107100816991226352230438074347184747225931731834130500420464954919266",
+    "end_date_iso": "2026-03-04T00:15:00+00:00",
+    "slug": "btc-updown-5m-1772583000",
+    "direction": "NO",
+    "entry_price": 0.595,
+    "size_usdc": 5.0,
+    "num_tokens": 8.4034,
+    "btc_spot_at_entry": 68157.1,
+    "outcome": null,
+    "pnl_usdc": null
+  },
+  "daily_trades": 1,
+  "daily_pnl_usdc": 0.0,
+  "last_reset_date": "2026-03-04",
+  "btc_spot": 68157.1,
+  "bot_running": true,
+  "last_signal": {
+    "action": "BUY_NO",
+    "reason": "downtrend + breakdown",
+    "ema_fast": 68226.86,
+    "ema_slow": 68303.61,
+    "close": 68157.1,
+    "atr_pct": 0.103,
+    "yes_price": 0.405,
+    "no_price": 0.595,
+    "trend_up": false,
+    "trend_down": true
+  }
+}

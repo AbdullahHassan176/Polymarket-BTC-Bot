@@ -1,0 +1,19 @@
+# Secrets - NEVER commit these
+.env
+
+# Runtime state - machine-specific
+state.json
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# Editor
+.vscode/
+.idea/
+*.swp
