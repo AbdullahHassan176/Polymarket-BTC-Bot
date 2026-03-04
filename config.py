@@ -33,6 +33,9 @@ POLY_PRIVATE_KEY: str = os.getenv("POLY_PRIVATE_KEY", "")
 # Your Polygon wallet address (0x...). Used as the "funder" for USDC collateral.
 POLY_WALLET_ADDRESS: str = os.getenv("POLY_WALLET_ADDRESS", "")
 
+# Optional: Anthropic API key for arbitrage checker (python -m arbitrage.run_arbitrage_check --api).
+ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+
 # Polymarket CLOB host.
 CLOB_HOST: str = "https://clob.polymarket.com"
 
@@ -187,6 +190,48 @@ CANDLE_BAR: str = "1m"
 
 # Number of candles to fetch. Must be >= EMA_SLOW + buffer for valid indicators.
 CANDLE_LIMIT: int = 100
+
+# ---------------------------------------------------------------------------
+# ARBITRAGE LOOP (Polymarket vs options fair value)
+# ---------------------------------------------------------------------------
+
+# Search queries for Gamma API to find arbitrage-candidate markets.
+ARBITRAGE_SEARCH_QUERIES: list = [
+    "Amazon hit",
+    "Amazon finish",
+    "NVIDIA hit",
+    "NVIDIA finish",
+    "Google hit",
+    "Google finish",
+    "Meta finish",
+    "Tesla finish",
+    "Apple finish",
+    "Palantir finish",
+    "Netflix hit",
+    "Netflix finish",
+    "Microsoft finish",
+    "Opendoor finish",
+]
+
+# Min mispricing to trade: buy Yes when polymarket_yes < fair_value - this (e.g. 0.05 = 5%).
+ARBITRAGE_MIN_EDGE: float = 0.05
+
+# Default IV if historical vol unavailable.
+ARBITRAGE_DEFAULT_IV: float = 0.25
+
+# Risk-free rate for fair value (e.g. 0.045 = 4.5%).
+ARBITRAGE_RISK_FREE_RATE: float = 0.045
+
+# Max USDC per arbitrage bet.
+ARBITRAGE_RISK_PER_TRADE_USDC: float = 10.0
+
+# Max arbitrage positions open at once.
+ARBITRAGE_MAX_OPEN_POSITIONS: int = 3
+
+# Paper trading: starting balance and exit rules.
+ARBITRAGE_PAPER_STARTING_BALANCE_USDC: float = 50.0
+ARBITRAGE_PAPER_TAKE_PROFIT: float = 0.85   # Close Yes position when mid >= 85c (lock profit).
+ARBITRAGE_PAPER_STOP_LOSS: float = 0.25    # Close when mid <= 25c (cap loss).
 
 # ---------------------------------------------------------------------------
 # BOT LOOP TIMING

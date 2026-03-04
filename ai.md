@@ -97,3 +97,4 @@ python bot.py --real
 - Always check `REAL_TRADING=False` before adding any auto-execution logic
 - See `docs/THEORY_AND_IMPLEMENTATION.md` for full theory, research, and replication guide
 - See `docs/CLAIM_REDEEM.md` for options to auto-claim/redeem winnings
+- **Arbitrage (Polymarket vs options)**: `arbitrage/` module: (1) **Automated loop** `run_arbitrage_loop.py` – Black-Scholes fair value, auto-trade when cheap, auto-redeem; no LLM; (2) Brief for OpenClaw. See `docs/ARBITRAGE_STRATEGY.md` and `arbitrage/README.md`

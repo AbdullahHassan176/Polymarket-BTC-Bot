@@ -1,0 +1,11 @@
+{
+  "spot": 170.50,
+  "barrier_or_strike": 375,
+  "time_to_expiry_years": 0.85,
+  "risk_free_rate": 0.045,
+  "dividend_yield": 0,
+  "atm_iv": 0.22,
+  "iv_at_strike": 0.24,
+  "event_type": "finish_above",
+  "comment": "Example: stock finish above strike by expiry. Use touch for barrier-hitting."
+}

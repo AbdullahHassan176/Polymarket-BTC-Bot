@@ -218,10 +218,24 @@ class PolymarketClient:
         """
         if not slug or not slug.startswith("btc-updown-5m-"):
             return None
+        event = self.get_event_by_slug(slug)
+        if not event:
+            return None
+        markets = event.get("markets", [])
+        return markets[0] if markets else None
+
+    def get_event_by_slug(self, slug: str) -> Optional[dict]:
+        """
+        Fetch any Polymarket event by slug (Gamma API).
+        Use for arbitrage workflow: stock/finance markets (e.g. Google 2026, BTC price targets).
+        Returns full event dict with markets[], or None.
+        """
+        if not slug or not slug.strip():
+            return None
         try:
             resp = requests.get(
                 f"{config.GAMMA_API}/events",
-                params={"slug": slug},
+                params={"slug": slug.strip()},
                 timeout=config.REQUEST_TIMEOUT,
             )
             resp.raise_for_status()
@@ -230,10 +244,27 @@ class PolymarketClient:
             logger.debug("Gamma events by slug failed: %s", exc)
             return None
         events = data if isinstance(data, list) else []
-        if not events:
-            return None
-        markets = events[0].get("markets", [])
-        return markets[0] if markets else None
+        return events[0] if events else None
+
+    def search_events(self, query: str, limit_per_type: int = 15) -> List[dict]:
+        """
+        Search Polymarket events by text (e.g. "Google 2026", "BTC", "finance").
+        Uses Gamma public-search. Returns list of event dicts.
+        """
+        if not query or not query.strip():
+            return []
+        try:
+            resp = requests.get(
+                f"{config.GAMMA_API}/public-search",
+                params={"q": query.strip(), "limit_per_type": limit_per_type},
+                timeout=config.REQUEST_TIMEOUT,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.RequestException as exc:
+            logger.debug("Gamma public-search failed: %s", exc)
+            return []
+        return data.get("events", []) if isinstance(data, dict) else []
 
     def _get_market_by_condition(self, condition_id: str) -> Optional[dict]:
         """
