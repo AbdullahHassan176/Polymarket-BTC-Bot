@@ -24,13 +24,14 @@ logger = logging.getLogger(__name__)
 STATE_FILE = "state.json"
 
 DEFAULT_STATE: dict = {
-    "open_position":   None,    # None or a position dict
-    "daily_trades":    0,       # Bets placed today
-    "daily_pnl_usdc":  0.0,     # Running P&L in USDC (can be negative)
-    "last_reset_date": "",      # UTC date of last daily counter reset
-    "btc_spot":        0.0,     # Latest BTC spot price (for dashboard)
-    "bot_running":     False,   # True while bot loop is active
-    "last_signal":     {},      # Latest signal debug info
+    "open_position":       None,    # None or a position dict
+    "daily_trades":        0,      # Bets placed today
+    "daily_pnl_usdc":      0.0,    # Running P&L in USDC today (can be negative)
+    "cumulative_pnl_usdc":  0.0,    # All-time P&L (for compounding; not reset at midnight)
+    "last_reset_date":     "",     # UTC date of last daily counter reset
+    "btc_spot":            0.0,    # Latest BTC spot price (for dashboard)
+    "bot_running":         False,  # True while bot loop is active
+    "last_signal":         {},     # Latest signal debug info
 }
 
 
@@ -130,6 +131,28 @@ class RiskManager:
         return True, "ok"
 
     # -----------------------------------------------------------------------
+    # POSITION SIZING (compounding)
+    # -----------------------------------------------------------------------
+
+    def get_trade_size_usdc(self) -> float:
+        """
+        Return USDC amount to risk on the next trade.
+        If COMPOUNDING_ENABLED: size = (BANKROLL_START + cumulative_pnl) * RISK_PCT_PER_TRADE,
+        clamped to [MIN_TRADE_USDC, RISK_PER_TRADE_USDC]. Otherwise use RISK_PER_TRADE_USDC.
+        """
+        if not getattr(config, "COMPOUNDING_ENABLED", False):
+            return round(config.RISK_PER_TRADE_USDC, 2)
+        bankroll = getattr(config, "BANKROLL_START_USDC", 50.0)
+        cumulative = self.state.get("cumulative_pnl_usdc", 0.0)
+        equity = bankroll + cumulative
+        pct = getattr(config, "RISK_PCT_PER_TRADE", 0.10)
+        min_size = getattr(config, "MIN_TRADE_USDC", 1.0)
+        max_size = config.RISK_PER_TRADE_USDC
+        size = equity * pct
+        size = max(min_size, min(max_size, size))
+        return round(size, 2)
+
+    # -----------------------------------------------------------------------
     # STATE UPDATES
     # -----------------------------------------------------------------------
 
@@ -144,14 +167,19 @@ class RiskManager:
         )
 
     def record_trade_closed(self, pnl_usdc: float) -> None:
-        """Clear open position and update running P&L."""
-        self.state["open_position"]  = None
+        """Clear open position and update daily + cumulative P&L."""
+        self.state["open_position"] = None
         self.state["daily_pnl_usdc"] = round(
             self.state.get("daily_pnl_usdc", 0.0) + pnl_usdc, 4
         )
+        self.state["cumulative_pnl_usdc"] = round(
+            self.state.get("cumulative_pnl_usdc", 0.0) + pnl_usdc, 4
+        )
         self._save()
         logger.info(
-            "Bet closed. Daily P&L: $%.4f USDC", self.state["daily_pnl_usdc"]
+            "Bet closed. Daily P&L: $%.4f USDC | Cumulative: $%.4f",
+            self.state["daily_pnl_usdc"],
+            self.state["cumulative_pnl_usdc"],
         )
 
     def update_open_position(self, position: dict) -> None:

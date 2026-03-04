@@ -59,10 +59,11 @@ Two-level auth via `py-clob-client`:
 - Bot polls `is_market_closed()` and records WIN/LOSS after resolution
 
 ## Risk Controls
-- `RISK_PER_TRADE_USDC = 10.0` — max USDC per bet
-- `MAX_DAILY_LOSS_USDC = 30.0` — stop for the day after this loss
-- `MAX_TRADES_PER_DAY = 6` — at most 6 bets per UTC day
-- Max 1 open position at a time
+- `RISK_PER_TRADE_USDC` — max USDC per bet (hard cap)
+- `MAX_DAILY_LOSS_USDC` — stop for the day after this loss
+- `MAX_TRADES_PER_DAY` — at most N bets per UTC day
+- **Compounding**: `COMPOUNDING_ENABLED`, `BANKROLL_START_USDC`, `RISK_PCT_PER_TRADE`, `MIN_TRADE_USDC`. Size = (bankroll + cumulative_pnl) * pct, clamped to [MIN, RISK_PER_TRADE_USDC]. `cumulative_pnl_usdc` in state (not reset at midnight).
+- **Take profit / stop loss**: optional early exit (TP/SL). Outcome logged as "TP" or "SL".
 - Kill switch: create `STOP_BOT.txt` to stop gracefully
 
 ## Running
@@ -95,3 +96,4 @@ python bot.py --real
 - Polymarket token IDs change every 5 minutes (new market = new tokens)
 - Always check `REAL_TRADING=False` before adding any auto-execution logic
 - See `docs/THEORY_AND_IMPLEMENTATION.md` for full theory, research, and replication guide
+- See `docs/CLAIM_REDEEM.md` for options to auto-claim/redeem winnings

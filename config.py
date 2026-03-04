@@ -18,6 +18,10 @@ load_dotenv()
 # Leave False during paper testing - the bot logs "PAPER" instead of ordering.
 REAL_TRADING: bool = False
 
+# Auto-redeem winning positions to USDC for reinvestment (real mode only).
+# Uses polymarket-apis. Requires POL for gas (EOA).
+AUTO_REDEEM_ENABLED: bool = True
+
 # ---------------------------------------------------------------------------
 # POLYMARKET CREDENTIALS  (loaded from .env)
 # ---------------------------------------------------------------------------
@@ -60,20 +64,43 @@ LATE_WINDOW_SECS: int = 90
 LATE_MIN_MOVE_PCT: float = 0.003  # 0.3% move from window start required
 LATE_MAX_PRICE: float = 0.90  # Don't buy if already priced above 90c (we want mispricing)
 
+# Take profit: sell position early when best bid >= this (lock in gains).
+TAKE_PROFIT_ENABLED: bool = True
+TAKE_PROFIT_PRICE: float = 0.85
+
+# Stop loss: sell position early when best bid <= this (cap loss).
+STOP_LOSS_ENABLED: bool = True
+STOP_LOSS_PRICE: float = 0.25
+
 # ---------------------------------------------------------------------------
 # RISK MANAGEMENT  (all USD / USDC values)
 # ---------------------------------------------------------------------------
 
-# Maximum USDC to risk on a single 5-minute bet.
-# $5 for $50 paper test (~10% per trade).
-RISK_PER_TRADE_USDC: float = 5.0
+# Maximum USDC to risk on a single 5-minute bet (hard cap).
+# $10 allows larger stakes when compounding.
+RISK_PER_TRADE_USDC: float = 10.0
 
 # Stop trading for the day if cumulative losses exceed this amount.
-# $25 for $50 paper test (50% max drawdown).
 MAX_DAILY_LOSS_USDC: float = 25.0
 
 # Maximum number of bets per calendar day (UTC).
 MAX_TRADES_PER_DAY: int = 12
+
+# ---------------------------------------------------------------------------
+# COMPOUNDING (reinvest profits for controlled growth)
+# ---------------------------------------------------------------------------
+
+# Starting capital for position sizing. Paper: virtual bankroll. Real: can match wallet.
+BANKROLL_START_USDC: float = 50.0
+
+# When True, trade size = BANKROLL_START + cumulative_pnl, scaled by RISK_PCT_PER_TRADE, clamped to [MIN_TRADE_USDC, RISK_PER_TRADE_USDC].
+COMPOUNDING_ENABLED: bool = True
+
+# Fraction of current equity to risk per trade when compounding (e.g. 0.10 = 10%).
+RISK_PCT_PER_TRADE: float = 0.10
+
+# Minimum stake per trade (floor when bankroll is down).
+MIN_TRADE_USDC: float = 1.0
 
 # ---------------------------------------------------------------------------
 # STRATEGY MODE

@@ -373,6 +373,8 @@ class PolymarketClient:
         side: str,
         size_usdc: float,
         price: float,
+        *,
+        size_in_tokens: bool = False,
     ) -> Optional[dict]:
         """
         Place a limit order for a YES or NO token.
@@ -381,10 +383,11 @@ class PolymarketClient:
         which should fill immediately in a liquid market.
 
         Args:
-            token_id:  CLOB token ID for the outcome to trade.
-            side:      "BUY" (buy YES/NO) or "SELL" (close an existing position).
-            size_usdc: Dollar amount to spend (for BUY) or tokens to sell.
-            price:     Limit price (0.0 - 1.0). Use get_best_price() to find it.
+            token_id:        CLOB token ID for the outcome to trade.
+            side:            "BUY" (buy YES/NO) or "SELL" (close an existing position).
+            size_usdc:       For BUY: USDC to spend. For SELL with size_in_tokens=True: token count.
+            price:           Limit price (0.0 - 1.0). Use get_best_price() to find it.
+            size_in_tokens:  If True, size_usdc is interpreted as number of tokens (for SELL).
 
         Returns:
             Order response dict from Polymarket, or None on failure.
@@ -399,8 +402,11 @@ class PolymarketClient:
 
         try:
             clob_side = BUY if side.upper() == "BUY" else SELL
-            # size = number of tokens. At price P, buying size_usdc/P tokens costs size_usdc.
-            num_tokens = round(size_usdc / price, 4) if price > 0 else 0
+            if size_in_tokens:
+                num_tokens = round(size_usdc, 4)
+            else:
+                # BUY: size_usdc / price = tokens we can buy.
+                num_tokens = round(size_usdc / price, 4) if price > 0 else 0
             if num_tokens <= 0:
                 logger.error("Computed token size is zero. Skipping order.")
                 return None

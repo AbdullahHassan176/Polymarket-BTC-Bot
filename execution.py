@@ -53,7 +53,13 @@ def set_trades_csv(path: str) -> None:
 # PAPER TRADING - ENTER
 # ---------------------------------------------------------------------------
 
-def paper_enter(market: dict, direction: str, entry_price: float, btc_spot: float) -> dict:
+def paper_enter(
+    market: dict,
+    direction: str,
+    entry_price: float,
+    btc_spot: float,
+    size_usdc: Optional[float] = None,
+) -> dict:
     """
     Simulate entering a Polymarket bet in paper mode.
 
@@ -62,12 +68,14 @@ def paper_enter(market: dict, direction: str, entry_price: float, btc_spot: floa
         direction:   "YES" (betting UP) or "NO" (betting DOWN).
         entry_price: Token price at time of entry (0.0 - 1.0).
         btc_spot:    Current BTC/USDT price (for context logging).
+        size_usdc:   USDC to risk. If None, uses config.RISK_PER_TRADE_USDC.
 
     Returns:
         Position dict stored in state.json.
     """
-    now        = datetime.now(timezone.utc).isoformat()
-    size_usdc  = config.RISK_PER_TRADE_USDC
+    now = datetime.now(timezone.utc).isoformat()
+    if size_usdc is None:
+        size_usdc = config.RISK_PER_TRADE_USDC
     num_tokens = round(size_usdc / entry_price, 4) if entry_price > 0 else 0
 
     logger.info(
@@ -200,6 +208,122 @@ def paper_record_outcome(position: dict, market_result: str, btc_spot: float) ->
 
 
 # ---------------------------------------------------------------------------
+# EARLY EXIT (Take Profit / Stop Loss)
+# ---------------------------------------------------------------------------
+
+def paper_close_early(
+    position: dict, exit_price: float, btc_spot: float, reason: str
+) -> dict:
+    """
+    Record an early close (TP/SL) for a paper position.
+    PnL = exit_price * num_tokens - size_usdc.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    size = position["size_usdc"]
+    tokens = position["num_tokens"]
+    pnl = round(exit_price * tokens - size, 4)
+    pnl_pct = (pnl / size * 100) if size > 0 else 0.0
+
+    logger.info(
+        "=== PAPER EARLY EXIT (%s) ===\n"
+        "  Direction:   %s | Exit price: %.3f\n"
+        "  PnL:        $%.2f (%.1f%%)",
+        reason,
+        position["direction"],
+        exit_price,
+        pnl,
+        pnl_pct,
+    )
+
+    _log_trade({
+        "timestamp":    now,
+        "action":       "CLOSE",
+        "mode":         "PAPER",
+        "question":     position["question"],
+        "condition_id": position["condition_id"],
+        "direction":    position["direction"],
+        "entry_price":  position["entry_price"],
+        "size_usdc":    size,
+        "num_tokens":   tokens,
+        "outcome":      reason,
+        "pnl_usdc":     pnl,
+        "pnl_pct":      round(pnl_pct, 2),
+        "btc_spot":     btc_spot,
+    })
+
+    return {
+        **position,
+        "open":     False,
+        "outcome":  reason,
+        "pnl_usdc": pnl,
+        "pnl_pct":  round(pnl_pct, 2),
+    }
+
+
+def real_close_early(
+    position: dict,
+    exit_price: float,
+    client: PolymarketClient,
+    btc_spot: float,
+    reason: str,
+) -> Optional[dict]:
+    """
+    Close a real position early by selling tokens (TP/SL).
+    Places a SELL order at exit_price, then records outcome.
+    """
+    direction = position["direction"]
+    token_id = (
+        position["yes_token_id"] if direction == "YES" else position["no_token_id"]
+    )
+    tokens = position["num_tokens"]
+    size = position["size_usdc"]
+
+    resp = client.place_order(
+        token_id,
+        "SELL",
+        tokens,
+        exit_price,
+        size_in_tokens=True,
+    )
+    if resp is None:
+        logger.warning("Early exit (%s) sell order failed. Position still open.", reason)
+        return None
+
+    pnl = round(exit_price * tokens - size, 4)
+    pnl_pct = (pnl / size * 100) if size > 0 else 0.0
+    now = datetime.now(timezone.utc).isoformat()
+
+    logger.info(
+        "REAL EARLY EXIT (%s): sold @ %.3f | PnL: $%.2f (%.1f%%)",
+        reason, exit_price, pnl, pnl_pct,
+    )
+
+    _log_trade({
+        "timestamp":    now,
+        "action":       "CLOSE",
+        "mode":         "REAL",
+        "question":     position["question"],
+        "condition_id": position["condition_id"],
+        "direction":    direction,
+        "entry_price":  position["entry_price"],
+        "size_usdc":    size,
+        "num_tokens":   tokens,
+        "outcome":      reason,
+        "pnl_usdc":     pnl,
+        "pnl_pct":      round(pnl_pct, 2),
+        "btc_spot":     btc_spot,
+    })
+
+    return {
+        **position,
+        "open":     False,
+        "outcome":  reason,
+        "pnl_usdc": pnl,
+        "pnl_pct":  round(pnl_pct, 2),
+    }
+
+
+# ---------------------------------------------------------------------------
 # REAL TRADING - ENTER
 # ---------------------------------------------------------------------------
 
@@ -209,6 +333,7 @@ def real_enter(
     direction: str,
     entry_price: float,
     btc_spot: float,
+    size_usdc: Optional[float] = None,
 ) -> Optional[dict]:
     """
     Place a real Polymarket order for the given direction.
@@ -219,6 +344,7 @@ def real_enter(
         direction:   "YES" or "NO".
         entry_price: Current token price to use as limit price.
         btc_spot:    BTC spot price for logging.
+        size_usdc:   USDC to risk. If None, uses config.RISK_PER_TRADE_USDC.
 
     Returns:
         Position dict on success, None if order failed.
@@ -227,8 +353,9 @@ def real_enter(
         logger.error("real_enter() called but REAL_TRADING=False. Aborting.")
         return None
 
-    token_id  = market["yes_token_id"] if direction == "YES" else market["no_token_id"]
-    size_usdc = config.RISK_PER_TRADE_USDC
+    if size_usdc is None:
+        size_usdc = config.RISK_PER_TRADE_USDC
+    token_id = market["yes_token_id"] if direction == "YES" else market["no_token_id"]
 
     logger.info(
         "REAL BET: %s | Market: %s | Price: %.3f | Size: $%.2f USDC",
@@ -293,6 +420,7 @@ def real_record_outcome(position: dict, market_result: str, btc_spot: float) -> 
     Record the outcome of a real trade after the market resolves.
 
     Same PnL math as paper - the token either pays $1.00 (win) or $0.00 (loss).
+    If AUTO_REDEEM_ENABLED, redeems winning tokens to USDC.
     """
     now       = datetime.now(timezone.utc).isoformat()
     direction = position["direction"]
@@ -308,6 +436,22 @@ def real_record_outcome(position: dict, market_result: str, btc_spot: float) -> 
         "REAL BET RESOLVED: %s | Result: %s | PnL: $%.2f (%.1f%%)",
         outcome, market_result, pnl, pnl_pct,
     )
+
+    if won and getattr(config, "AUTO_REDEEM_ENABLED", False):
+        try:
+            from redeem import redeem_winning_position
+            tx = redeem_winning_position(
+                condition_id=position["condition_id"],
+                direction=direction,
+                num_tokens=tokens,
+                neg_risk=False,
+            )
+            if tx:
+                logger.info("AUTO_REDEEM: Winnings redeemed. USDC returned to wallet.")
+            else:
+                logger.warning("AUTO_REDEEM: Redeem skipped or failed. Claim manually on Polymarket.")
+        except Exception as exc:
+            logger.warning("AUTO_REDEEM: Error during redeem: %s", exc)
 
     _log_trade({
         "timestamp":    now,

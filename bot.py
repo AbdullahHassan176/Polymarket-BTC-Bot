@@ -163,10 +163,27 @@ def run_one_iteration(client: PolymarketClient, risk: RiskManager) -> None:
     # Step 2: Check for existing open position - may need to wait for resolution.
     open_pos = risk.get_open_position()
     if open_pos is not None:
-        # Check if the market has already resolved since our last check.
+        # Only consider resolution once we're past the scheduled end time (prevents
+        # false "closed" from API causing multiple entries in same window).
+        end_iso = open_pos.get("end_date_iso", "")
+        end_dt = None
+        if end_iso:
+            try:
+                end_dt = datetime.fromisoformat(end_iso.replace("Z", "+00:00"))
+                if end_dt.tzinfo is None:
+                    end_dt = end_dt.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                pass
+        now = datetime.now(timezone.utc)
+        past_end = end_dt is not None and now >= end_dt
+
         condition_id = open_pos.get("condition_id", "")
         slug = _position_slug(open_pos)
-        if condition_id and client.is_market_closed(condition_id, slug=slug or None):
+        if (
+            past_end
+            and condition_id
+            and client.is_market_closed(condition_id, slug=slug or None)
+        ):
             result   = client.get_market_result(condition_id, slug=slug or None)
             btc_spot = data.get_btc_spot_price() or 0.0
             if result:
@@ -176,9 +193,49 @@ def run_one_iteration(client: PolymarketClient, risk: RiskManager) -> None:
                     closed = execution.paper_record_outcome(open_pos, result, btc_spot)
                 risk.record_trade_closed(pnl_usdc=closed.get("pnl_usdc", 0.0))
                 return
-        # Market still open - nothing to do this iteration.
-        end_iso = open_pos.get("end_date_iso", "?")
-        logger.info("Open position exists (resolves %s). Monitoring...", end_iso)
+        # Market still open: check take profit / stop loss.
+        token_id = (
+            open_pos["yes_token_id"]
+            if open_pos.get("direction") == "YES"
+            else open_pos.get("no_token_id")
+        )
+        if token_id:
+            bid = client.get_best_price(token_id, "SELL")
+            if bid is not None:
+                btc_spot = data.get_btc_spot_price() or 0.0
+                if getattr(config, "TAKE_PROFIT_ENABLED", False) and bid >= getattr(
+                    config, "TAKE_PROFIT_PRICE", 0.85
+                ):
+                    if open_pos.get("mode") == "REAL" and config.REAL_TRADING:
+                        closed = execution.real_close_early(
+                            open_pos, bid, client, btc_spot, "TP"
+                        )
+                    else:
+                        closed = execution.paper_close_early(
+                            open_pos, bid, btc_spot, "TP"
+                        )
+                    if closed is not None:
+                        risk.record_trade_closed(
+                            pnl_usdc=closed.get("pnl_usdc", 0.0)
+                        )
+                    return
+                if getattr(config, "STOP_LOSS_ENABLED", False) and bid <= getattr(
+                    config, "STOP_LOSS_PRICE", 0.25
+                ):
+                    if open_pos.get("mode") == "REAL" and config.REAL_TRADING:
+                        closed = execution.real_close_early(
+                            open_pos, bid, client, btc_spot, "SL"
+                        )
+                    else:
+                        closed = execution.paper_close_early(
+                            open_pos, bid, btc_spot, "SL"
+                        )
+                    if closed is not None:
+                        risk.record_trade_closed(
+                            pnl_usdc=closed.get("pnl_usdc", 0.0)
+                        )
+                    return
+        logger.info("Open position exists (resolves %s). Monitoring...", end_iso or "?")
         return
 
     # Step 3: Find the active 5-minute market window.
@@ -263,15 +320,20 @@ def run_one_iteration(client: PolymarketClient, risk: RiskManager) -> None:
     direction   = "YES" if action == strategy.BUY_YES else "NO"
     entry_price = yes_price if direction == "YES" else no_price
 
+    size_usdc = risk.get_trade_size_usdc()
     logger.info(
-        "All checks passed! Entering %s bet @ %.3f | market: %s",
-        direction, entry_price, market["question"],
+        "All checks passed! Entering %s bet @ %.3f | size $%.2f | market: %s",
+        direction, entry_price, size_usdc, market["question"],
     )
 
     if config.REAL_TRADING:
-        position = execution.real_enter(client, market, direction, entry_price, btc_spot)
+        position = execution.real_enter(
+            client, market, direction, entry_price, btc_spot, size_usdc=size_usdc
+        )
     else:
-        position = execution.paper_enter(market, direction, entry_price, btc_spot)
+        position = execution.paper_enter(
+            market, direction, entry_price, btc_spot, size_usdc=size_usdc
+        )
 
     if position is not None:
         risk.record_trade_opened(position)
@@ -327,13 +389,14 @@ def run_bot_loop(
     # Startup: log USDC balance in real mode.
     if config.REAL_TRADING and client.has_credentials:
         usdc = client.get_usdc_balance()
+        min_size = risk.get_trade_size_usdc()
         if usdc is not None:
             logger.info("USDC balance available for trading: $%.4f", usdc)
-            if usdc < config.RISK_PER_TRADE_USDC:
+            if usdc < min_size:
                 logger.warning(
-                    "USDC balance ($%.4f) is below RISK_PER_TRADE_USDC ($%.2f). "
+                    "USDC balance ($%.4f) is below current trade size ($%.2f). "
                     "Top up your wallet before trades can fire.",
-                    usdc, config.RISK_PER_TRADE_USDC,
+                    usdc, min_size,
                 )
         else:
             logger.warning("Could not fetch USDC balance. Check credentials.")
