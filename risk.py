@@ -24,14 +24,16 @@ logger = logging.getLogger(__name__)
 STATE_FILE = "state.json"
 
 DEFAULT_STATE: dict = {
-    "open_position":       None,    # None or a position dict
-    "daily_trades":        0,      # Bets placed today
-    "daily_pnl_usdc":      0.0,    # Running P&L in USDC today (can be negative)
-    "cumulative_pnl_usdc":  0.0,    # All-time P&L (for compounding; not reset at midnight)
-    "last_reset_date":     "",     # UTC date of last daily counter reset
-    "btc_spot":            0.0,    # Latest BTC spot price (for dashboard)
-    "bot_running":         False,  # True while bot loop is active
-    "last_signal":         {},     # Latest signal debug info
+    "open_position":             None,   # None or a position dict
+    "daily_trades":              0,      # Bets placed today
+    "daily_pnl_usdc":            0.0,    # Running P&L in USDC today (can be negative)
+    "cumulative_pnl_usdc":       0.0,    # All-time P&L (for compounding; not reset at midnight)
+    "starting_balance_usdc":     0.0,    # Starting capital at session start (for tracking)
+    "last_traded_condition_id":  "",     # One trade per window: skip re-entry in same window
+    "last_reset_date":           "",     # UTC date of last daily counter reset
+    "btc_spot":                  0.0,    # Latest BTC spot price (for dashboard)
+    "bot_running":               False,  # True while bot loop is active
+    "last_signal":               {},     # Latest signal debug info
 }
 
 
@@ -56,12 +58,16 @@ class RiskManager:
             logger.info("No %s found - starting fresh.", self._state_file)
             state = dict(DEFAULT_STATE)
             state["last_reset_date"] = _today_utc()
+            state["starting_balance_usdc"] = getattr(config, "BANKROLL_START_USDC", 50.0)
             self._save(state)
             return state
         try:
             with open(self._state_file, "r", encoding="utf-8") as f:
                 loaded = json.load(f)
-            return {**DEFAULT_STATE, **loaded}
+            state = {**DEFAULT_STATE, **loaded}
+            if state.get("starting_balance_usdc", 0) == 0:
+                state["starting_balance_usdc"] = getattr(config, "BANKROLL_START_USDC", 50.0)
+            return state
         except (json.JSONDecodeError, OSError) as exc:
             logger.error("Failed to load %s: %s - using defaults.", self._state_file, exc)
             return dict(DEFAULT_STATE)
@@ -102,9 +108,13 @@ class RiskManager:
     # TRADE GATE
     # -----------------------------------------------------------------------
 
-    def can_trade(self) -> tuple:
+    def can_trade(self, market: Optional[dict] = None) -> tuple:
         """
         Check all risk conditions before entering a new bet.
+
+        Args:
+            market: Optional active market dict. If provided and ONE_TRADE_PER_WINDOW,
+                    blocks re-entry in the same 5-min window.
 
         Returns:
             (True, "ok") if allowed.
@@ -113,6 +123,12 @@ class RiskManager:
         # No two open positions simultaneously.
         if self.state.get("open_position") is not None:
             return False, "already have an open position (waiting for resolution)"
+
+        # One trade per window: do not re-enter same 5-min market after TP/SL.
+        if getattr(config, "ONE_TRADE_PER_WINDOW", False) and market:
+            cid = market.get("condition_id", "")
+            if cid and self.state.get("last_traded_condition_id") == cid:
+                return False, "already traded this window (one trade per window)"
 
         # Daily trade count.
         trades_today = self.state.get("daily_trades", 0)
@@ -160,10 +176,16 @@ class RiskManager:
         """Store an open position and increment daily trade counter."""
         self.state["open_position"] = position
         self.state["daily_trades"]  = self.state.get("daily_trades", 0) + 1
+        if getattr(config, "ONE_TRADE_PER_WINDOW", False):
+            self.state["last_traded_condition_id"] = position.get("condition_id", "")
         self._save()
+        starting = self.state.get("starting_balance_usdc", 0) or config.BANKROLL_START_USDC
+        cumulative = self.state.get("cumulative_pnl_usdc", 0.0)
+        current = starting + cumulative
         logger.info(
-            "Bet opened. Daily trades: %d/%d",
+            "Bet opened. Daily trades: %d/%d | Current balance: $%.2f (started $%.2f, overall profit: $%.2f)",
             self.state["daily_trades"], config.MAX_TRADES_PER_DAY,
+            current, starting, cumulative,
         )
 
     def record_trade_closed(self, pnl_usdc: float) -> None:
@@ -176,10 +198,12 @@ class RiskManager:
             self.state.get("cumulative_pnl_usdc", 0.0) + pnl_usdc, 4
         )
         self._save()
+        starting = self.state.get("starting_balance_usdc", 0) or config.BANKROLL_START_USDC
+        cumulative = self.state["cumulative_pnl_usdc"]
+        current = starting + cumulative
         logger.info(
-            "Bet closed. Daily P&L: $%.4f USDC | Cumulative: $%.4f",
-            self.state["daily_pnl_usdc"],
-            self.state["cumulative_pnl_usdc"],
+            "Bet closed. Trade PnL: $%.2f | Daily PnL: $%.2f | Overall profit: $%.2f | Current balance: $%.2f",
+            pnl_usdc, self.state["daily_pnl_usdc"], cumulative, current,
         )
 
     def update_open_position(self, position: dict) -> None:

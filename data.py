@@ -21,12 +21,73 @@ import config
 logger = logging.getLogger(__name__)
 
 OKX_CANDLES_URL = "https://www.okx.com/api/v5/market/candles"
+OKX_HISTORY_CANDLES_URL = "https://www.okx.com/api/v5/market/history-candles"
 OKX_TICKER_URL  = "https://www.okx.com/api/v5/market/ticker"
+
+# ETH-USDT for cross-asset features (research: cross-asset improves BTC prediction)
+ETH_SPOT_TICKER = "ETH-USDT"
 
 
 # ---------------------------------------------------------------------------
 # CANDLE FETCHING
 # ---------------------------------------------------------------------------
+
+def fetch_candles_history(
+    inst_id: str = None,
+    bar: str = "1m",
+    limit: int = 300,
+    after_ms: int = None,
+    before_ms: int = None,
+) -> pd.DataFrame:
+    """
+    Fetch historical OHLCV candles from OKX (supports pagination via after/before).
+    Use after_ms to get older data; OKX returns newest-first, so we sort to oldest-first.
+    """
+    inst_id = inst_id or config.SPOT_TICKER
+    params = {"instId": inst_id, "bar": bar, "limit": str(min(limit, 100))}
+    if after_ms is not None:
+        params["after"] = str(after_ms)
+    if before_ms is not None:
+        params["before"] = str(before_ms)
+
+    try:
+        resp = requests.get(
+            OKX_HISTORY_CANDLES_URL,
+            params=params,
+            timeout=config.REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") != "0" or not data.get("data"):
+            return pd.DataFrame()
+        return _parse_candles(data["data"])
+    except Exception as exc:
+        logger.warning("History candles fetch failed (%s)", exc)
+        return pd.DataFrame()
+
+
+def fetch_eth_candles(bar: str = "1m", limit: int = 100) -> pd.DataFrame:
+    """Fetch ETH-USDT candles for cross-asset features."""
+    return _fetch_candles_for_ticker(ETH_SPOT_TICKER, bar, limit)
+
+
+def _fetch_candles_for_ticker(ticker: str, bar: str, limit: int) -> pd.DataFrame:
+    """Fetch candles for a specific ticker (BTC or ETH)."""
+    try:
+        resp = requests.get(
+            OKX_CANDLES_URL,
+            params={"instId": ticker, "bar": bar, "limit": str(limit)},
+            timeout=config.REQUEST_TIMEOUT,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("code") != "0" or not data.get("data"):
+            return pd.DataFrame()
+        return _parse_candles(data["data"])
+    except Exception as exc:
+        logger.warning("Candle fetch for %s failed (%s)", ticker, exc)
+        return pd.DataFrame()
+
 
 def fetch_candles(bar: str = None, limit: int = None) -> pd.DataFrame:
     """

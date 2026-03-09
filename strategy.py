@@ -59,9 +59,9 @@ def check_signal(
 
     mode = getattr(config, "STRATEGY_MODE", "momentum")
     if mode == "contrarian":
-        return _check_contrarian(indicators, yes_price, no_price)
+        return _check_contrarian(indicators, yes_price, no_price, ctx)
     if mode == "hybrid":
-        return _check_hybrid(indicators, yes_price, no_price)
+        return _check_hybrid(indicators, yes_price, no_price, ctx)
     return _check_momentum(indicators, yes_price, no_price)
 
 
@@ -94,6 +94,7 @@ def _check_late_window(
         return BUY_YES, _build_debug(
             indicators, yes_price, no_price, BUY_YES,
             f"late window: move={move_pct*100:.3f}%, YES mispriced",
+            tier="late_window",
         )
 
     # BUY_NO: strong down move, NO not yet priced to 90c+
@@ -105,6 +106,7 @@ def _check_late_window(
         return BUY_NO, _build_debug(
             indicators, yes_price, no_price, BUY_NO,
             f"late window: move={move_pct*100:.3f}%, NO mispriced",
+            tier="late_window",
         )
 
     reason = "late: "
@@ -119,11 +121,11 @@ def _check_late_window(
     return SKIP, _build_debug(indicators, yes_price, no_price, SKIP, reason)
 
 
-def _check_hybrid(indicators: dict, yes_price: float, no_price: float) -> tuple:
+def _check_hybrid(indicators: dict, yes_price: float, no_price: float, context: Optional[dict] = None) -> tuple:
     """
     Contrarian -> momentum -> fallback (if enabled).
     """
-    action, debug = _check_contrarian(indicators, yes_price, no_price)
+    action, debug = _check_contrarian(indicators, yes_price, no_price, context or {})
     if action != SKIP:
         return action, debug
     action, debug = _check_momentum(indicators, yes_price, no_price)
@@ -164,6 +166,7 @@ def _check_fallback(indicators: dict, yes_price: float, no_price: float) -> tupl
         )
         return BUY_YES, _build_debug(
             indicators, yes_price, no_price, BUY_YES, "fallback: IBS oversold bounce",
+            tier="fallback",
         )
     if ibs > ibs_high and pmin <= no_price <= pmax:
         logger.info(
@@ -172,6 +175,13 @@ def _check_fallback(indicators: dict, yes_price: float, no_price: float) -> tupl
         )
         return BUY_NO, _build_debug(
             indicators, yes_price, no_price, BUY_NO, "fallback: IBS overbought fade",
+            tier="fallback",
+        )
+
+    # Optional weak-trend fallback (disabled in fallback-lite mode).
+    if not getattr(config, "FALLBACK_TREND_ENABLED", True):
+        return SKIP, _build_debug(
+            indicators, yes_price, no_price, SKIP, "fallback: no IBS setup",
         )
 
     # Weak trend: EMA direction, relaxed spread, no breakout
@@ -195,6 +205,7 @@ def _check_fallback(indicators: dict, yes_price: float, no_price: float) -> tupl
         )
         return BUY_YES, _build_debug(
             indicators, yes_price, no_price, BUY_YES, "fallback: weak uptrend",
+            tier="fallback",
         )
     if trend_down and no_ok:
         logger.info(
@@ -203,6 +214,7 @@ def _check_fallback(indicators: dict, yes_price: float, no_price: float) -> tupl
         )
         return BUY_NO, _build_debug(
             indicators, yes_price, no_price, BUY_NO, "fallback: weak downtrend",
+            tier="fallback",
         )
 
     return SKIP, _build_debug(
@@ -210,14 +222,19 @@ def _check_fallback(indicators: dict, yes_price: float, no_price: float) -> tupl
     )
 
 
-def _check_contrarian(indicators: dict, yes_price: float, no_price: float) -> tuple:
+def _check_contrarian(indicators: dict, yes_price: float, no_price: float, context: Optional[dict] = None) -> tuple:
     """
     Contrarian / mispricing: buy the cheap side when mean reversion signals.
     BUY_YES when YES cheap and IBS low (oversold, expect bounce).
     BUY_NO when NO cheap and IBS high (overbought, expect pullback).
+    When CONTRARIAN_USE_MODEL_FAIR_VALUE: only take bet if model-implied P exceeds market price + MIN_EDGE.
+    Optional EMA filter: skip when fighting strong trend (CONTRARIAN_MAX_EMA_SPREAD_AGAINST).
     """
-    atr_pct = indicators["atr_pct"]
-    ibs     = indicators.get("ibs", 0.5)
+    atr_pct  = indicators["atr_pct"]
+    ibs      = indicators.get("ibs", 0.5)
+    ema_fast = indicators.get("ema_fast", 0)
+    ema_slow = indicators.get("ema_slow", 0)
+    ctx      = context or {}
 
     # Volatility filter
     if atr_pct >= config.ATR_THRESHOLD * config.ATR_SPIKE_MULTIPLIER:
@@ -225,31 +242,75 @@ def _check_contrarian(indicators: dict, yes_price: float, no_price: float) -> tu
     if atr_pct >= config.ATR_THRESHOLD:
         return SKIP, _build_debug(indicators, yes_price, no_price, SKIP, "ATR% too high")
 
-    # Cheap price band: we want asymmetric payoff (buy at 10-35c)
+    # Trend strength for "don't fight strong momentum" filter
+    ema_spread  = abs(ema_fast - ema_slow)
+    trend_down  = ema_fast < ema_slow
+    trend_up    = ema_fast > ema_slow
+    max_spread  = getattr(config, "CONTRARIAN_MAX_EMA_SPREAD_AGAINST", 0)
+    block_yes   = max_spread > 0 and trend_down and ema_spread >= max_spread
+    block_no    = max_spread > 0 and trend_up and ema_spread >= max_spread
+
+    # Cheap price band: we want asymmetric payoff (buy at 10-25c)
     yes_cheap = config.CONTRARIAN_MIN_PRICE <= yes_price <= config.CONTRARIAN_MAX_PRICE
     no_cheap  = config.CONTRARIAN_MIN_PRICE <= no_price  <= config.CONTRARIAN_MAX_PRICE
 
+    # Optional: model-as-oracle filter — only bet when model says this side is cheap
+    model_ok_yes = True
+    model_ok_no  = True
+    if getattr(config, "CONTRARIAN_USE_MODEL_FAIR_VALUE", False):
+        try:
+            from btc_5m_fair_value import model_implied_p_up
+            window_open = ctx.get("window_start_btc")
+            secs_left   = ctx.get("secs_remaining")
+            current_btc = ctx.get("current_btc") or indicators.get("close", 0)
+            if window_open is not None and secs_left is not None and secs_left > 0:
+                p_yes = model_implied_p_up(
+                    window_open, current_btc, secs_left, atr_pct,
+                    ema_fast=indicators.get("ema_fast"), ema_slow=indicators.get("ema_slow"), ibs=indicators.get("ibs"),
+                )
+                p_no = 1.0 - p_yes
+                edge = getattr(config, "CONTRARIAN_MIN_EDGE", 0.05)
+                model_ok_yes = p_yes >= (yes_price + edge)
+                model_ok_no = p_no >= (no_price + edge)
+                logger.debug(
+                    "Model P(YES)=%.2f P(NO)=%.2f | YES=%.2f NO=%.2f | edge=%.2f",
+                    p_yes, p_no, yes_price, no_price, edge,
+                )
+        except Exception as exc:
+            logger.debug("Model fair value check skipped: %s", exc)
+
     # BUY_YES: IBS low (bar closed weak) = oversold, expect bounce
-    if ibs < config.CONTRARIAN_IBS_BOUNCE and yes_cheap:
+    # Skip if fighting strong downtrend (don't catch a falling knife)
+    if ibs < config.CONTRARIAN_IBS_BOUNCE and yes_cheap and model_ok_yes and not block_yes:
         logger.info(
             "Signal BUY_YES (contrarian): IBS=%.2f < %.2f oversold, YES=%.2f cheap",
             ibs, config.CONTRARIAN_IBS_BOUNCE, yes_price,
         )
-        return BUY_YES, _build_debug(indicators, yes_price, no_price, BUY_YES, "contrarian bounce")
+        return BUY_YES, _build_debug(indicators, yes_price, no_price, BUY_YES, "contrarian bounce", tier="contrarian")
 
     # BUY_NO: IBS high (bar closed strong) = overbought, expect pullback
-    if ibs > config.CONTRARIAN_IBS_FADE and no_cheap:
+    # Skip if fighting strong uptrend (don't fade a strong rally)
+    if ibs > config.CONTRARIAN_IBS_FADE and no_cheap and model_ok_no and not block_no:
         logger.info(
             "Signal BUY_NO (contrarian): IBS=%.2f > %.2f overbought, NO=%.2f cheap",
             ibs, config.CONTRARIAN_IBS_FADE, no_price,
         )
-        return BUY_NO, _build_debug(indicators, yes_price, no_price, BUY_NO, "contrarian fade")
+        return BUY_NO, _build_debug(indicators, yes_price, no_price, BUY_NO, "contrarian fade", tier="contrarian")
 
     reason = "no contrarian setup (IBS/price)"
-    if not yes_cheap and not no_cheap:
+    if block_yes:
+        reason = f"contrarian BUY_YES blocked: strong downtrend (EMA spread ${ema_spread:.0f})"
+    elif block_no:
+        reason = f"contrarian BUY_NO blocked: strong uptrend (EMA spread ${ema_spread:.0f})"
+    elif not yes_cheap and not no_cheap:
         reason = f"no cheap side (YES=%.2f, NO=%.2f)" % (yes_price, no_price)
     elif ibs >= config.CONTRARIAN_IBS_BOUNCE and ibs <= config.CONTRARIAN_IBS_FADE:
         reason = f"IBS=%.2f not extreme" % ibs
+    elif getattr(config, "CONTRARIAN_USE_MODEL_FAIR_VALUE", False) and (yes_cheap or no_cheap):
+        if yes_cheap and not model_ok_yes:
+            reason = "model edge too small for YES"
+        elif no_cheap and not model_ok_no:
+            reason = "model edge too small for NO"
     return SKIP, _build_debug(indicators, yes_price, no_price, SKIP, reason)
 
 
@@ -308,7 +369,7 @@ def _check_momentum(indicators: dict, yes_price: float, no_price: float) -> tupl
             "breakout=True, ATR%%=%.3f%%, IBS=%.2f, YES price=%.2f",
             ema_fast, ema_slow, close, atr_pct * 100, ibs, yes_price,
         )
-        return BUY_YES, _build_debug(indicators, yes_price, no_price, BUY_YES, "uptrend + breakout + IBS")
+        return BUY_YES, _build_debug(indicators, yes_price, no_price, BUY_YES, "uptrend + breakout + IBS", tier="momentum")
 
     if down_signal:
         if not no_price_ok:
@@ -328,7 +389,7 @@ def _check_momentum(indicators: dict, yes_price: float, no_price: float) -> tupl
             "breakout_down=True, ATR%%=%.3f%%, IBS=%.2f, NO price=%.2f",
             ema_fast, ema_slow, close, atr_pct * 100, ibs, no_price,
         )
-        return BUY_NO, _build_debug(indicators, yes_price, no_price, BUY_NO, "downtrend + breakdown + IBS")
+        return BUY_NO, _build_debug(indicators, yes_price, no_price, BUY_NO, "downtrend + breakdown + IBS", tier="momentum")
 
     # No clear signal
     reasons = []
@@ -350,9 +411,10 @@ def _build_debug(
     no_price: float,
     action: str,
     reason: str,
+    tier: Optional[str] = None,
 ) -> dict:
     """Build a debug info dict for logging and dashboard display."""
-    return {
+    out = {
         "action":       action,
         "reason":       reason,
         "ema_fast":     round(indicators.get("ema_fast", 0), 2),
@@ -365,3 +427,6 @@ def _build_debug(
         "trend_up":     indicators.get("ema_fast", 0) > indicators.get("ema_slow", 0),
         "trend_down":   indicators.get("ema_fast", 0) < indicators.get("ema_slow", 0),
     }
+    if tier is not None:
+        out["tier"] = tier
+    return out

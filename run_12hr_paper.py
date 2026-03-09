@@ -1,14 +1,12 @@
 """
-Run a 2-hour paper test (hybrid strategy + improvements from logs).
+Run a 12-hour paper test (hybrid strategy, relaxed filters).
 
-- STRATEGY_MODE = "hybrid"
-- ENTRY_WINDOW_SECS = 180
-- Uses: CONTRARIAN_MAX_PRICE 0.25, tighter fallback, ATR 0.03,
-  cheap-entry TP/SL rules, one trade per window, strategy_tier logging.
-- Trades log: logs/trades_2hr_hybrid.csv
-- Creates STOP_BOT.txt after 2 hours.
+- STRATEGY_MODE = "hybrid" (contrarian first, momentum fallback)
+- ENTRY_WINDOW_SECS = 180 (3 min to enter)
+- Trades log: logs/trades_12hr_hybrid.csv
+- Creates STOP_BOT.txt after 12 hours.
 
-Run: python run_2hr_paper.py
+Run: python run_12hr_paper.py
 """
 
 import logging
@@ -18,7 +16,7 @@ import time
 from datetime import datetime, timezone
 
 import execution
-execution.set_trades_csv(os.path.join("logs", "trades_2hr_tight.csv"))
+execution.set_trades_csv(os.path.join("logs", "trades_12hr_hybrid.csv"))
 
 import config
 config.STRATEGY_MODE = "hybrid"
@@ -29,30 +27,29 @@ from risk import RiskManager, DEFAULT_STATE
 
 logger = logging.getLogger(__name__)
 
-TWO_HR_SEC = 2 * 60 * 60  # 7200
+TWELVE_HR_SEC = 12 * 60 * 60  # 43200
 
 
 def _reset_state() -> None:
-    """Reset state.json for fresh 2hr run."""
+    """Reset state.json for fresh 12hr run."""
     state = dict(DEFAULT_STATE)
     state["last_reset_date"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     state["open_position"] = None
     state["daily_trades"] = 0
     state["daily_pnl_usdc"] = 0.0
     state["starting_balance_usdc"] = getattr(config, "BANKROLL_START_USDC", 50.0)
-    state["last_traded_condition_id"] = ""
     risk = RiskManager()
     risk.state = state
     risk._save()
-    logger.info("State reset for 2hr hybrid paper test.")
+    logger.info("State reset for 12hr hybrid paper test.")
 
 
-def _stop_after_2hr() -> None:
-    """Create STOP_BOT.txt after 2 hours."""
-    time.sleep(TWO_HR_SEC)
+def _stop_after_12hr() -> None:
+    """Create STOP_BOT.txt after 12 hours."""
+    time.sleep(TWELVE_HR_SEC)
     with open(KILL_SWITCH_FILE, "w") as f:
         f.write("")
-    logger.info("2 hours elapsed. STOP_BOT.txt created. Bot will exit.")
+    logger.info("12 hours elapsed. STOP_BOT.txt created. Bot will exit.")
 
 
 def main() -> None:
@@ -65,12 +62,12 @@ def main() -> None:
     _reset_state()
 
     logger.info("=" * 60)
-    logger.info("2-HOUR PAPER TEST: hybrid + improvements (one trade/window, cheap TP/SL)")
-    logger.info("Trades log: logs/trades_2hr_tight.csv")
+    logger.info("12-HOUR PAPER TEST: hybrid strategy, 180s entry window")
+    logger.info("Trades log: logs/trades_12hr_hybrid.csv")
     logger.info("Bot log: logs/bot.log")
     logger.info("=" * 60)
 
-    t = threading.Thread(target=_stop_after_2hr, daemon=True)
+    t = threading.Thread(target=_stop_after_12hr, daemon=True)
     t.start()
 
     run_bot_loop(override_paper=True, override_real=False, run_once=False)

@@ -203,7 +203,14 @@ def run_one_iteration(client: PolymarketClient, risk: RiskManager) -> None:
             bid = client.get_best_price(token_id, "SELL")
             if bid is not None:
                 btc_spot = data.get_btc_spot_price() or 0.0
-                if getattr(config, "TAKE_PROFIT_ENABLED", False) and bid >= getattr(
+                entry_p = open_pos.get("entry_price") or 0.0
+                hold_resolution = entry_p <= getattr(
+                    config, "CHEAP_ENTRY_HOLD_TO_RESOLUTION_THRESHOLD", 0.10
+                )
+                no_sl_cheap = entry_p < getattr(
+                    config, "CHEAP_ENTRY_NO_SL_THRESHOLD", 0.15
+                )
+                if not hold_resolution and getattr(config, "TAKE_PROFIT_ENABLED", False) and bid >= getattr(
                     config, "TAKE_PROFIT_PRICE", 0.85
                 ):
                     if open_pos.get("mode") == "REAL" and config.REAL_TRADING:
@@ -219,7 +226,7 @@ def run_one_iteration(client: PolymarketClient, risk: RiskManager) -> None:
                             pnl_usdc=closed.get("pnl_usdc", 0.0)
                         )
                     return
-                if getattr(config, "STOP_LOSS_ENABLED", False) and bid <= getattr(
+                if not no_sl_cheap and getattr(config, "STOP_LOSS_ENABLED", False) and bid <= getattr(
                     config, "STOP_LOSS_PRICE", 0.25
                 ):
                     if open_pos.get("mode") == "REAL" and config.REAL_TRADING:
@@ -294,31 +301,65 @@ def run_one_iteration(client: PolymarketClient, risk: RiskManager) -> None:
     logger.info("YES price: %.3f | NO price: %.3f", yes_price, no_price)
 
     # Step 7: Evaluate signal.
-    context = {}
+    window_start_ts = end_dt - timedelta(seconds=300)
+    window_start_btc = data.get_btc_price_at_time(df, window_start_ts)
+    context = {
+        "window_start_btc": window_start_btc,
+        "secs_remaining": secs_remaining,
+        "current_btc": btc_spot,
+    }
     if in_late:
-        window_start_ts = end_dt - timedelta(seconds=300)
-        window_start_btc = data.get_btc_price_at_time(df, window_start_ts)
-        context = {
-            "in_late_window": True,
-            "window_start_btc": window_start_btc,
-            "current_btc": btc_spot,
-        }
+        context["in_late_window"] = True
     action, debug_info = strategy.check_signal(indicators, yes_price, no_price, context)
     risk.update_last_signal(debug_info)
+    cid = market.get("condition_id", "")
 
     if action == strategy.SKIP:
         logger.info("Signal SKIP (%s). No bet this window.", debug_info.get("reason", ""))
+        execution.log_signal_evaluated(cid, action, debug_info, yes_price, no_price, context, traded=False)
         return
 
     # Step 8: Risk gate.
-    allowed, reason = risk.can_trade()
+    allowed, reason = risk.can_trade(market=market)
     if not allowed:
         logger.info("Risk gate BLOCKED: %s", reason)
+        execution.log_signal_evaluated(cid, action, debug_info, yes_price, no_price, context, traded=False, risk_block_reason=reason)
         return
 
     # Step 9: Enter position.
     direction   = "YES" if action == strategy.BUY_YES else "NO"
     entry_price = yes_price if direction == "YES" else no_price
+
+    # Optional profitability-first EV gate using model-implied probability.
+    if getattr(config, "MODEL_EV_GATE_ENABLED", False):
+        try:
+            from btc_5m_fair_value import model_implied_p_up
+            p_yes = model_implied_p_up(
+                context.get("window_start_btc"),
+                btc_spot,
+                secs_remaining,
+                indicators.get("atr_pct", 0.0),
+                ema_fast=indicators.get("ema_fast"),
+                ema_slow=indicators.get("ema_slow"),
+                ibs=indicators.get("ibs"),
+            )
+            model_prob = p_yes if direction == "YES" else (1.0 - p_yes)
+            cost_buffer = getattr(config, "MODEL_EV_COST_BUFFER", 0.015)
+            min_edge = getattr(config, "MODEL_EV_MIN_EDGE", 0.03)
+            net_edge = model_prob - entry_price - cost_buffer
+            if net_edge < min_edge:
+                reason = (
+                    f"model EV gate: net_edge={net_edge:.3f} < min_edge={min_edge:.3f} "
+                    f"(model={model_prob:.3f}, entry={entry_price:.3f}, cost={cost_buffer:.3f})"
+                )
+                logger.info("Signal SKIP (%s).", reason)
+                execution.log_signal_evaluated(
+                    cid, action, debug_info, yes_price, no_price, context,
+                    traded=False, risk_block_reason=reason,
+                )
+                return
+        except Exception as exc:
+            logger.debug("Model EV gate skipped due to error: %s", exc)
 
     size_usdc = risk.get_trade_size_usdc()
     logger.info(
@@ -326,19 +367,26 @@ def run_one_iteration(client: PolymarketClient, risk: RiskManager) -> None:
         direction, entry_price, size_usdc, market["question"],
     )
 
+    strategy_tier = debug_info.get("tier", "")
     if config.REAL_TRADING:
         position = execution.real_enter(
-            client, market, direction, entry_price, btc_spot, size_usdc=size_usdc
+            client, market, direction, entry_price, btc_spot,
+            size_usdc=size_usdc, strategy_tier=strategy_tier,
+            signal_debug_info=debug_info, context=context,
         )
     else:
         position = execution.paper_enter(
-            market, direction, entry_price, btc_spot, size_usdc=size_usdc
+            market, direction, entry_price, btc_spot,
+            size_usdc=size_usdc, strategy_tier=strategy_tier,
+            signal_debug_info=debug_info, context=context,
         )
 
     if position is not None:
+        execution.log_signal_evaluated(cid, action, debug_info, yes_price, no_price, context, traded=True)
         risk.record_trade_opened(position)
         logger.info("Position recorded. Waiting for resolution at %s.", market["end_date_iso"])
     else:
+        execution.log_signal_evaluated(cid, action, debug_info, yes_price, no_price, context, traded=False, risk_block_reason="entry returned None")
         logger.error("Entry returned None - position not recorded.")
 
 

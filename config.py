@@ -58,7 +58,7 @@ SIGNATURE_TYPE: int = 0
 MARKET_KEYWORD: str = "Bitcoin Up or Down"
 
 # Only enter orders within this many seconds of the window opening.
-ENTRY_WINDOW_SECS: int = 90
+ENTRY_WINDOW_SECS: int = 180
 
 # Late-window entry: when we have ~4 min of price data, we can trade strong moves.
 # Enter in the last LATE_WINDOW_SECS if BTC move exceeds LATE_MIN_MOVE_PCT.
@@ -75,6 +75,13 @@ TAKE_PROFIT_PRICE: float = 0.85
 STOP_LOSS_ENABLED: bool = True
 STOP_LOSS_PRICE: float = 0.25
 
+# Cheap entries: no SL when entry_price < this (hold to TP or resolution).
+CHEAP_ENTRY_NO_SL_THRESHOLD: float = 0.15
+# Very cheap: no TP/SL when entry_price <= this (hold to resolution only).
+CHEAP_ENTRY_HOLD_TO_RESOLUTION_THRESHOLD: float = 0.10
+# One trade per 5-min window (no re-entry in same window after TP/SL).
+ONE_TRADE_PER_WINDOW: bool = True
+
 # ---------------------------------------------------------------------------
 # RISK MANAGEMENT  (all USD / USDC values)
 # ---------------------------------------------------------------------------
@@ -87,7 +94,7 @@ RISK_PER_TRADE_USDC: float = 10.0
 MAX_DAILY_LOSS_USDC: float = 25.0
 
 # Maximum number of bets per calendar day (UTC).
-MAX_TRADES_PER_DAY: int = 12
+MAX_TRADES_PER_DAY: int = 1000
 
 # ---------------------------------------------------------------------------
 # COMPOUNDING (reinvest profits for controlled growth)
@@ -123,7 +130,7 @@ EMA_FAST: int = 10
 EMA_SLOW: int = 30
 
 # ATR% threshold. Skip trade if volatility is too high (chaotic market).
-ATR_THRESHOLD: float = 0.035
+ATR_THRESHOLD: float = 0.030
 
 # Spike guard: if ATR% > threshold * multiplier, skip entirely.
 ATR_SPIKE_MULTIPLIER: float = 2.0
@@ -146,36 +153,63 @@ IBS_MAX_FOR_DOWN: float = 0.5
 # ---------------------------------------------------------------------------
 
 # Only buy when our side is priced at or below this (asymmetric payoff).
-CONTRARIAN_MAX_PRICE: float = 0.35
+CONTRARIAN_MAX_PRICE: float = 0.20
 
 # Avoid illiquid penny markets.
 CONTRARIAN_MIN_PRICE: float = 0.03
 
-# IBS extremes for mean reversion: buy YES when IBS < 0.25 (bar closed weak, expect bounce).
-CONTRARIAN_IBS_BOUNCE: float = 0.25
+# When True, only take contrarian bets when model-implied P(UP) or P(DOWN) is above market price + MIN_EDGE.
+CONTRARIAN_USE_MODEL_FAIR_VALUE: bool = True
+# Minimum edge: model prob must exceed market price by this (e.g. 0.04 = 4¢).
+CONTRARIAN_MIN_EDGE: float = 0.04
 
-# Buy NO when IBS > 0.75 (bar closed strong, expect pullback).
-CONTRARIAN_IBS_FADE: float = 0.75
+# IBS extremes for mean reversion: buy YES when IBS < bounce (bar closed weak, expect bounce).
+CONTRARIAN_IBS_BOUNCE: float = 0.20
+
+# Buy NO when IBS > fade (bar closed strong, expect pullback).
+CONTRARIAN_IBS_FADE: float = 0.80
+
+# Skip contrarian when fighting strong trend (EMA spread > this in USD). Set to 0 to disable.
+CONTRARIAN_MAX_EMA_SPREAD_AGAINST: float = 25.0
 
 # ---------------------------------------------------------------------------
 # FALLBACK (when contrarian + momentum both SKIP)
 # ---------------------------------------------------------------------------
 
-# Enable fallback tier: IBS-only and weak trend.
-FALLBACK_ENABLED: bool = True
+# Enable fallback tier: IBS-only and weak trend. Disabled after 0/9 wins in 2hr test.
+FALLBACK_ENABLED: bool = False
+# Enable weak-trend fallback entries (set False for fallback-IBS-only mode).
+FALLBACK_TREND_ENABLED: bool = False
 
 # IBS-only: extreme IBS + price in band. BUY_YES when IBS < this.
-FALLBACK_IBS_LOW: float = 0.20
+FALLBACK_IBS_LOW: float = 0.15
 
 # IBS-only: BUY_NO when IBS > this.
-FALLBACK_IBS_HIGH: float = 0.80
+FALLBACK_IBS_HIGH: float = 0.85
 
 # Fallback price band (wider than momentum, still reasonable payoff).
 FALLBACK_PRICE_MIN: float = 0.30
-FALLBACK_PRICE_MAX: float = 0.55
+FALLBACK_PRICE_MAX: float = 0.45
 
 # Weak trend: min EMA spread for fallback (lower than momentum's 25).
 FALLBACK_MIN_EMA_SPREAD_USD: float = 10.0
+
+# ---------------------------------------------------------------------------
+# 5-MIN MODEL FAIR VALUE  (for contrarian "oracle" filter)
+# ---------------------------------------------------------------------------
+# ATR% to annualized volatility multiplier for Black-Scholes digital P(UP).
+# Tune so model_implied_p_up is sensible (e.g. ~0.5 when spot ≈ window open).
+BTC5M_VOL_ANNUALIZATION: float = 50.0
+
+# Global model EV gate (profitability-first): only trade if model edge clears costs.
+# net_edge = model_prob(direction) - entry_price - MODEL_EV_COST_BUFFER
+# Trade only if net_edge >= MODEL_EV_MIN_EDGE.
+MODEL_EV_GATE_ENABLED: bool = False
+MODEL_EV_MIN_EDGE: float = 0.03
+MODEL_EV_COST_BUFFER: float = 0.015
+
+# Use ML classifier (sklearn RandomForest) instead of B-S when trained. See ml/ and docs/ML_IMPROVEMENTS_FROM_RESEARCH.md.
+MODEL_USE_ML: bool = False
 
 # ---------------------------------------------------------------------------
 # CANDLE DATA  (fetched from OKX public API - no OKX credentials needed)
@@ -238,8 +272,7 @@ ARBITRAGE_PAPER_STOP_LOSS: float = 0.25    # Close when mid <= 25c (cap loss).
 # ---------------------------------------------------------------------------
 
 # How often (seconds) the main loop checks for a new market window.
-# 10 seconds = more checkpoints per window, catches more opportunities.
-LOOP_INTERVAL_SECONDS: int = 10
+LOOP_INTERVAL_SECONDS: int = 5
 
 # HTTP request timeout in seconds.
 REQUEST_TIMEOUT: int = 10

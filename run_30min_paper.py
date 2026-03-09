@@ -37,6 +37,7 @@ def _reset_state() -> None:
     state["open_position"] = None
     state["daily_trades"] = 0
     state["daily_pnl_usdc"] = 0.0
+    state["starting_balance_usdc"] = getattr(config, "BANKROLL_START_USDC", 50.0)
     risk = RiskManager()
     risk.state = state
     risk._save()
