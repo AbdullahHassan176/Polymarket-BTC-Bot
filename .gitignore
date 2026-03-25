@@ -3,7 +3,13 @@
 
 # Runtime state - machine-specific
 state.json
+state_*.json
 logs/
+btc_bot.pid
+watchdog_btc.pid
+
+# Local agent/editor artifacts
+.claude/
 
 # Python
 __pycache__/

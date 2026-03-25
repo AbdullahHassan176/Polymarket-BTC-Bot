@@ -1,47 +1,46 @@
 # Auto-Claiming / Redeeming Polymarket Earnings
 
-When you win a Polymarket bet, the outcome tokens resolve to $1 each. To get USDC back into your wallet for reinvestment, you need to **redeem** (claim) those positions.
+When you win a Polymarket bet, outcome tokens resolve to $1 each. Redeem them to USDC for reinvestment.
 
-## ✅ Implemented: polymarket-apis (Option 1)
+## ✅ Implemented: lib/ctf_redeem (Proxy / Gnosis Safe)
 
-This bot uses **polymarket-apis** for auto-redeem. When a **REAL** trade wins:
+Same approach as Polymarket-Bitcoin-Oracle-Latency-Arbitrage-Bot:
 
-1. After recording the outcome, the bot calls `redeem_winning_position()` in `redeem.py`
-2. Uses `PolymarketWeb3Client.redeem_position()` to convert winning tokens to USDC
-3. USDC is returned to your wallet for reinvestment
+1. **Auto-redeem**: When a REAL trade wins, the bot calls `redeem_winning_position()` in `scripts/redeem.py`
+2. **Proxy mode** (PROXY_WALLET): Uses `lib/ctf_redeem.py` — direct on-chain via NegRiskAdapter.convertAndRedeemPositions. EOA signs; Safe executes.
+3. **EOA mode**: Falls back to polymarket-apis
 
 **Config:** `AUTO_REDEEM_ENABLED = True` in `config.py` (default).
 
 **Requirements:**
-- `pip install polymarket-apis` (included in requirements.txt)
-- Python 3.12+ for polymarket-apis
-- POL in your wallet for gas (EOA)
+- `PROXY_WALLET` + `PRIVATE_KEY` (or `POLY_PRIVATE_KEY`) in `.env`
+- POL on EOA for gas (execTransaction)
+- web3, eth-account (from py-clob-client)
 
-**Disable:** Set `AUTO_REDEEM_ENABLED = False` to claim manually.
+**Manual claim (unclaimed winnings):**
+
+If the bot missed a resolution (restart/crash) or auto-claim failed:
+
+```
+.\claim_unclaimed.bat
+# or
+python scripts/claim_unclaimed.py
+```
+
+Uses Data API `GET /positions?user=<proxy>&redeemable=true`, then redeems each via `lib/ctf_redeem`.
 
 ---
 
-## Other Options (if polymarket-apis unavailable)
+## Manual Redeem on Polymarket
 
-### Manual Redeem on Polymarket
-
-1. Go to [polymarket.com](https://polymarket.com) and connect your wallet.
-2. Open **Portfolio** → **Positions**.
-3. For resolved winning positions, click **Redeem** or **Claim**.
-
-### Polymarket Relayer (Safe / gasless)
-
-For Safe wallets: run your own [relayer client](https://docs.polymarket.com/developers/builders/relayer-client) to execute redemptions without paying gas.
-
-### Future: py-clob-client
-
-When `py-clob-client` adds an official redeem endpoint, we may switch to it. Until then, polymarket-apis handles auto-redeem.
+1. Go to [polymarket.com](https://polymarket.com) → Portfolio → Positions
+2. For resolved winning positions, click **Claim** / **Redeem**
 
 ## Summary
 
-| Method                 | Wallet | Auto? | Notes                        |
-|------------------------|--------|-------|------------------------------|
-| polymarket-apis        | EOA    | Yes   | POL for gas                  |
-| polymarket-apis        | Magic/Safe | Yes | Gasless possible             |
-| Manual on Polymarket UI| Any    | No    | Easiest for small volume     |
-| Relayer                | Safe   | Yes   | Run your own relayer         |
+| Method            | Wallet | Auto? | Notes                               |
+|-------------------|--------|-------|-------------------------------------|
+| lib/ctf_redeem    | Proxy  | Yes   | On-chain, EOA pays gas              |
+| polymarket-apis   | EOA    | Yes   | Fallback when no PROXY_WALLET       |
+| claim_unclaimed.py| Proxy  | No    | One-shot manual recovery            |
+| polymarket.com UI | Any    | No    | Manual claim                        |

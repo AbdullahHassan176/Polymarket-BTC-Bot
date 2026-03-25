@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sessions — Polymarket BTC 5-Min Bot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg-deep: #060a14; --bg-card: #0d1220; --bg-elevated: #121a2e;
+      --border: rgba(148, 163, 184, 0.12); --text: #e2e8f0; --text-muted: #94a3b8;
+      --accent: #a5b4fc; --accent-dim: #6366f1; --moon-glow: rgba(165, 180, 252, 0.15);
+      --win: #34d399; --win-bg: rgba(52, 211, 153, 0.12);
+      --loss: #f87171; --loss-bg: rgba(248, 113, 113, 0.12);
+      --btc-glow: rgba(247, 147, 26, 0.2);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Outfit', -apple-system, sans-serif;
+      background: var(--bg-deep); color: var(--text); min-height: 100vh;
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -20%, var(--moon-glow), transparent),
+        radial-gradient(ellipse 50% 30% at 90% 90%, var(--btc-glow), transparent),
+        linear-gradient(180deg, var(--bg-deep) 0%, #0a0f1a 100%);
+    }
+    .header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1.25rem 2rem; border-bottom: 1px solid var(--border);
+      background: rgba(13, 18, 32, 0.6); backdrop-filter: blur(8px);
+    }
+    .header h1 { font-size: 1.35rem; display: flex; align-items: center; gap: 0.5rem; }
+    .btc-icon { width: 24px; height: 24px; filter: drop-shadow(0 0 6px var(--btc-glow)); }
+    .nav { display: flex; gap: 0.75rem; align-items: center; }
+    .nav a, .refresh-btn {
+      background: var(--bg-elevated); border: 1px solid var(--border);
+      color: var(--text-muted); padding: 0.5rem 1rem; border-radius: 8px;
+      font-family: inherit; font-size: 0.85rem; text-decoration: none; cursor: pointer;
+      transition: all 0.2s;
+    }
+    .nav a:hover, .refresh-btn:hover { color: var(--accent); border-color: var(--accent-dim); }
+    .main { max-width: 1400px; margin: 0 auto; padding: 1.5rem 2rem 3rem; }
+    .card {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+      padding: 1.25rem; position: relative; overflow: hidden;
+    }
+    .card::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+      background: linear-gradient(90deg, transparent, var(--accent-dim), transparent);
+      opacity: 0.5;
+    }
+    .card-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 0.5rem; }
+    .card-value { font-size: 1.5rem; font-weight: 600; }
+    .card-value.positive { color: var(--win); }
+    .card-value.negative { color: var(--loss); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1.25rem; margin-bottom: 1.5rem; }
+    .section { margin-bottom: 2rem; }
+    .section-title {
+      font-size: 1rem; font-weight: 600; margin-bottom: 1rem;
+      display: flex; align-items: center; gap: 0.5rem;
+    }
+    .section-title::before {
+      content: ''; width: 4px; height: 18px;
+      background: linear-gradient(180deg, var(--accent), var(--accent-dim));
+      border-radius: 2px;
+    }
+    .table-wrap { overflow-x: auto; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-card); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+    th { font-weight: 500; color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(99, 102, 241, 0.04); }
+    .profit { color: var(--win); }
+    .loss { color: var(--loss); }
+    .badge { padding: 0.2rem 0.4rem; border-radius: 6px; font-size: 0.75rem; font-weight: 500; }
+    .badge.win { background: var(--win-bg); color: var(--win); }
+    .badge.loss { background: var(--loss-bg); color: var(--loss); }
+    .badge.pending { background: rgba(251,191,36,0.2); color: #fbbf24; }
+    .bot-type { font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 6px; background: var(--bg-elevated); color: var(--text-muted); }
+    .loading { color: var(--text-muted); font-size: 0.9rem; padding: 2rem; text-align: center; }
+    .error { color: var(--loss); font-size: 0.9rem; padding: 1rem; }
+    .last-update { font-size: 0.75rem; color: var(--text-muted); margin-top: 1rem; }
+    .active-card {
+      grid-column: 1 / -1;
+      display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap;
+    }
+    .active-card.running { border-left: 3px solid var(--win); }
+    .active-card.stopped { border-left: 3px solid var(--loss); }
+    .active-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--win); animation: pulse 2s infinite; }
+    .active-card.stopped .active-dot { background: var(--loss); opacity: 0.7; animation: none; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .filters { display: flex; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+    .filters input[type="datetime-local"] {
+      background: var(--bg-elevated); border: 1px solid var(--border);
+      color: var(--text); padding: 0.5rem 0.75rem; border-radius: 8px;
+      font-family: inherit; font-size: 0.9rem;
+    }
+    .filters .btn-outline {
+      background: transparent; border: 1px solid var(--border); color: var(--text-muted);
+      padding: 0.5rem 0.75rem; border-radius: 8px; font-size: 0.85rem; cursor: pointer;
+    }
+    .filters .btn-outline:hover { color: var(--accent); border-color: var(--accent-dim); }
+    .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; margin-bottom: 1.5rem; }
+    @media (max-width: 900px) { .charts-row { grid-template-columns: 1fr; } }
+    .chart-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; }
+    .chart-card .chart-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin-bottom: 0.75rem; }
+    .chart-wrap { height: 200px; position: relative; }
+    .current-run-section {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--win);
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+    }
+    .current-run-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    .open-position-card {
+      background: rgba(251, 191, 36, 0.12);
+      border: 1px solid rgba(251, 191, 36, 0.3);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 0.75rem;
+      font-size: 0.9rem;
+    }
+    .last-signal-card {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <h1>
+      <span class="btc-icon">₿</span>
+      Session Metrics
+    </h1>
+    <div class="nav">
+      <a href="/">← Dashboard</a>
+      <button class="refresh-btn" onclick="refresh()">⟳ Refresh</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <div class="grid">
+      <div class="card active-card stopped" id="active-card">
+        <span class="active-dot"></span>
+        <div>
+          <div class="card-title">Bot Status</div>
+          <div id="active-status">Checking…</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Total Sessions</div>
+        <div id="total-sessions" class="card-value loading">—</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Total P&L (All)</div>
+        <div id="total-pnl" class="card-value loading">—</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Sessions with Trades</div>
+        <div id="sessions-with-trades" class="card-value loading">—</div>
+      </div>
+    </div>
+
+    <div id="current-run-section" class="current-run-section" style="display:none;">
+      <h2 class="section-title">Current Run (In Progress)</h2>
+      <div class="current-run-grid">
+        <div class="card">
+          <div class="card-title">Daily P&L</div>
+          <div id="cr-daily-pnl" class="card-value">—</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Cumulative P&L</div>
+          <div id="cr-cumulative-pnl" class="card-value">—</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Daily Trades</div>
+          <div id="cr-daily-trades" class="card-value">—</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Balance (Tracked)</div>
+          <div id="cr-balance" class="card-value">—</div>
+        </div>
+        <div class="card">
+          <div class="card-title">Win Rate</div>
+          <div id="cr-win-rate" class="card-value">—</div>
+        </div>
+      </div>
+      <div id="cr-open-position" class="open-position-card" style="display:none;"></div>
+      <div id="cr-last-signal" class="last-signal-card" style="display:none;"></div>
+      <div class="card" style="margin-top:1rem;">
+        <div class="card-title">Trades in Current Run</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Direction</th>
+                <th>Outcome</th>
+                <th>Tier</th>
+                <th>Bet</th>
+                <th>Profit</th>
+                <th>Result</th>
+              </tr>
+            </thead>
+            <tbody id="cr-trades-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="charts-row" id="sessions-charts">
+      <div class="chart-card">
+        <div class="chart-title">Session P&amp;L Distribution</div>
+        <div class="chart-wrap"><canvas id="chart-sessions-pnl"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Cumulative P&amp;L Across Sessions</div>
+        <div class="chart-wrap"><canvas id="chart-sessions-cumulative"></canvas></div>
+      </div>
+    </div>
+
+    <section class="section">
+      <h2 class="section-title">Sessions — Start &amp; PnL</h2>
+      <div class="filters">
+        <label>From <input type="datetime-local" id="filter-since"></label>
+        <label>To <input type="datetime-local" id="filter-until"></label>
+        <button class="btn-outline" onclick="applyFilters()">Apply</button>
+        <button class="btn-outline" onclick="setFilterLast24h(); refresh();">Last 24h</button>
+        <button class="btn-outline" onclick="clearDateFilter(); applyFilters();">Clear</button>
+      </div>
+      <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1rem;">Shows only the <strong>current run</strong> (since last bot start). Live (REAL) trades only. Restart the dashboard server if you don’t see updates.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Session</th>
+              <th>Started</th>
+              <th>Stopped</th>
+              <th>Trades</th>
+              <th>W / L</th>
+              <th>Wagered</th>
+              <th>Session PnL</th>
+            </tr>
+          </thead>
+          <tbody id="sessions-body">
+            <tr><td colspan="7" class="loading">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <p class="last-update" id="last-update"></p>
+  </main>
+
+  <script>
+    const API = '/api';
+    let allSessions = [];
+    let currentRun = null;
+    let chartSessionsPnl = null, chartSessionsCumulative = null;
+
+    function formatProfit(val) {
+      const n = parseFloat(val) || 0;
+      return '$' + (n >= 0 ? '+' : '') + n.toFixed(2);
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s ?? '';
+      return d.innerHTML;
+    }
+
+    function renderActive(status) {
+      const card = document.getElementById('active-card');
+      const statusEl = document.getElementById('active-status');
+      const running = status.watchdog_running && status.bot_running;
+      card.className = 'card active-card ' + (running ? 'running' : 'stopped');
+      statusEl.textContent = running ? 'Running' : 'Stopped';
+    }
+
+    function renderCurrentRun(cr) {
+      const section = document.getElementById('current-run-section');
+      if (!cr) {
+        section.style.display = 'none';
+        return;
+      }
+      section.style.display = 'block';
+      const state = cr.state || {};
+      const a = cr.analytics || {};
+      const dailyPnl = parseFloat(state.daily_pnl_usdc) || parseFloat(cr.daily_pnl_usdc) || 0;
+      const cumPnl = parseFloat(state.cumulative_pnl_usdc) || parseFloat(cr.cumulative_pnl_usdc) || 0;
+      const startBal = parseFloat(state.starting_balance_usdc) || 0;
+      const balance = startBal + cumPnl;
+
+      document.getElementById('cr-daily-pnl').textContent = formatProfit(dailyPnl);
+      document.getElementById('cr-daily-pnl').className = 'card-value ' + (dailyPnl >= 0 ? 'positive' : 'negative');
+      document.getElementById('cr-cumulative-pnl').textContent = formatProfit(cumPnl);
+      document.getElementById('cr-cumulative-pnl').className = 'card-value ' + (cumPnl >= 0 ? 'positive' : 'negative');
+      document.getElementById('cr-daily-trades').textContent = state.daily_trades ?? cr.daily_trades ?? 0;
+      document.getElementById('cr-balance').textContent = '$' + balance.toFixed(2);
+      document.getElementById('cr-win-rate').textContent = (a.win_rate ?? 0) + '%';
+
+      const op = cr.open_position || state.open_position;
+      const opEl = document.getElementById('cr-open-position');
+      if (op && op.open) {
+        opEl.style.display = 'block';
+        opEl.innerHTML = '<strong>Open position:</strong> ' + (op.direction || '?') + ' @ ' + ((op.entry_price || 0) * 100).toFixed(0) + '¢ — $' + (parseFloat(op.size_usdc || 0)).toFixed(2) + ' — ' + escapeHtml((op.question || '').slice(0, 80)) + (op.question && op.question.length > 80 ? '…' : '');
+      } else {
+        opEl.style.display = 'none';
+      }
+
+      const ls = cr.last_signal || state.last_signal;
+      const lsEl = document.getElementById('cr-last-signal');
+      if (ls && (ls.action || ls.reason)) {
+        lsEl.style.display = 'block';
+        lsEl.innerHTML = '<strong>Last signal:</strong> ' + escapeHtml(ls.action || '') + ' — ' + escapeHtml(ls.reason || '') + (ls.tier ? ' (tier: ' + escapeHtml(ls.tier) + ')' : '');
+      } else {
+        lsEl.style.display = 'none';
+      }
+
+      const trades = cr.trades || [];
+      const tbody = document.getElementById('cr-trades-body');
+      if (!trades.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="loading">No trades yet in current run</td></tr>';
+      } else {
+        tbody.innerHTML = trades.slice().reverse().map(t => {
+          const profit = parseFloat(t.profit || 0) || 0;
+          const won = (t.won || '').toLowerCase();
+          const badge = won === 'win' ? '<span class="badge win">Win</span>' : won === 'loss' ? '<span class="badge loss">Loss</span>' : '<span class="badge pending">Pending</span>';
+          return '<tr>' +
+            '<td>' + escapeHtml(t.timestamp || '—') + '</td>' +
+            '<td>' + escapeHtml((t.direction || '—').toLowerCase()) + '</td>' +
+            '<td>' + escapeHtml(t.outcome || '—') + '</td>' +
+            '<td>' + escapeHtml(t.strategy_tier || '—') + '</td>' +
+            '<td>$' + (parseFloat(t.bet_usdc || 0)).toFixed(2) + '</td>' +
+            '<td class="' + (profit >= 0 ? 'profit' : 'loss') + '">' + formatProfit(profit) + '</td>' +
+            '<td>' + badge + '</td></tr>';
+        }).join('');
+      }
+    }
+
+    function apiUrl() {
+      const since = document.getElementById('filter-since')?.value || '';
+      const until = document.getElementById('filter-until')?.value || '';
+      let url = API + '/sessions';
+      if (since || until) {
+        const p = new URLSearchParams();
+        if (since) p.set('since', since);
+        if (until) p.set('until', until);
+        url += '?' + p.toString();
+      }
+      return url;
+    }
+
+    function setFilterLast24h() {
+      const now = new Date();
+      const ago = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const pad = n => String(n).padStart(2, '0');
+      document.getElementById('filter-since').value = ago.getFullYear() + '-' + pad(ago.getMonth()+1) + '-' + pad(ago.getDate()) + 'T' + pad(ago.getHours()) + ':' + pad(ago.getMinutes());
+      document.getElementById('filter-until').value = now.getFullYear() + '-' + pad(now.getMonth()+1) + '-' + pad(now.getDate()) + 'T' + pad(now.getHours()) + ':' + pad(now.getMinutes());
+    }
+
+    function clearDateFilter() {
+      document.getElementById('filter-since').value = '';
+      document.getElementById('filter-until').value = '';
+    }
+
+    function filterSessions() {
+      return allSessions;
+    }
+
+    function renderSessionsCharts(sessions) {
+      const withTrades = sessions.filter(s => (s.trades || 0) > 0);
+      if (!withTrades.length) return;
+      if (chartSessionsPnl) chartSessionsPnl.destroy();
+      if (chartSessionsCumulative) chartSessionsCumulative.destroy();
+
+      const labels = withTrades.slice(0, 20).map(s => (s.run_id || '').replace(/^session-/, '') || '?');
+      const pnls = withTrades.slice(0, 20).map(s => parseFloat(s.pnl) || 0);
+      const colors = pnls.map(p => p >= 0 ? 'rgba(52,211,153,0.8)' : 'rgba(248,113,113,0.8)');
+
+      const ctxPnl = document.getElementById('chart-sessions-pnl');
+      if (ctxPnl) {
+        chartSessionsPnl = new Chart(ctxPnl, {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [{ label: 'Session P&L ($)', data: pnls, backgroundColor: colors, borderRadius: 4 }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            indexAxis: 'y',
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { grid: { color: 'rgba(148,163,184,0.08)' }, ticks: { color: '#94a3b8', callback: v => '$' + v } },
+              y: { grid: { display: false }, ticks: { color: '#94a3b8', maxRotation: 0, font: { size: 9 } } }
+            }
+          }
+        });
+      }
+
+      const rev = withTrades.slice().reverse();
+      let cum = 0;
+      const cumData = rev.map((s, i) => {
+        cum += parseFloat(s.pnl) || 0;
+        return { x: i + 1, y: cum };
+      });
+      const ctxCum = document.getElementById('chart-sessions-cumulative');
+      if (ctxCum && cumData.length) {
+        chartSessionsCumulative = new Chart(ctxCum, {
+          type: 'line',
+          data: {
+            labels: cumData.map(d => d.x),
+            datasets: [{
+              label: 'Cumulative P&L ($)',
+              data: cumData.map(d => d.y),
+              borderColor: cum >= 0 ? '#34d399' : '#f87171',
+              backgroundColor: cum >= 0 ? 'rgba(52,211,153,0.15)' : 'rgba(248,113,113,0.15)',
+              fill: true, tension: 0.2, pointRadius: 0, pointHoverRadius: 4,
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { title: { display: true, text: 'Session #', color: '#94a3b8' }, grid: { color: 'rgba(148,163,184,0.08)' }, ticks: { color: '#94a3b8' } },
+              y: { grid: { color: 'rgba(148,163,184,0.08)' }, ticks: { color: '#94a3b8', callback: v => '$' + v } }
+            }
+          }
+        });
+      }
+    }
+
+    function renderTable(sessions) {
+      const withTrades = allSessions.filter(s => (s.trades || 0) > 0);
+      let totalPnl = allSessions.reduce((sum, s) => sum + (parseFloat(s.pnl) || 0), 0);
+      if (currentRun && currentRun.state) {
+        totalPnl = parseFloat(currentRun.cumulative_pnl_usdc || currentRun.state.cumulative_pnl_usdc) || totalPnl;
+      }
+
+      document.getElementById('total-sessions').textContent = allSessions.length + (currentRun ? 1 : 0);
+      document.getElementById('total-sessions').className = 'card-value';
+      const crHasTrades = currentRun && (currentRun.trades || []).length > 0;
+      document.getElementById('sessions-with-trades').textContent = withTrades.length + (crHasTrades ? 1 : 0);
+      document.getElementById('sessions-with-trades').className = 'card-value';
+
+      const pnlEl = document.getElementById('total-pnl');
+      pnlEl.textContent = formatProfit(totalPnl);
+      pnlEl.className = 'card-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
+
+      const tbody = document.getElementById('sessions-body');
+      let rows = sessions.map(s => {
+        const pnl = parseFloat(s.pnl) || 0;
+        return `<tr>
+          <td><span class="bot-type">${escapeHtml(s.run_id || '—')}</span></td>
+          <td>${escapeHtml(s.started || '—')}</td>
+          <td>${escapeHtml(s.stopped || '—')}</td>
+          <td>${s.trades || 0}</td>
+          <td>${s.wins || 0} / ${s.losses || 0}</td>
+          <td>$${parseFloat(s.wagered || 0).toFixed(2)}</td>
+          <td class="${pnl >= 0 ? 'profit' : 'loss'}">${formatProfit(pnl)}</td>
+        </tr>`;
+      });
+      if (currentRun) {
+        const crTrades = currentRun.trades || [];
+        const crResolved = crTrades.filter(t => (t.won || '').toLowerCase() in { win: 1, loss: 1 });
+        const crWins = crResolved.filter(t => (t.won || '').toLowerCase() === 'win').length;
+        const crPnl = parseFloat(currentRun.cumulative_pnl_usdc || currentRun.state?.cumulative_pnl_usdc) || 0;
+        const crWagered = crResolved.reduce((sum, t) => sum + (parseFloat(t.bet_usdc) || 0), 0);
+        rows.unshift(`<tr style="background:rgba(52,211,153,0.06);">
+          <td><span class="bot-type">current (in progress)</span></td>
+          <td>${escapeHtml(currentRun.started || '—')}</td>
+          <td>—</td>
+          <td>${crResolved.length}</td>
+          <td>${crWins} / ${crResolved.length - crWins}</td>
+          <td>$${crWagered.toFixed(2)}</td>
+          <td class="${crPnl >= 0 ? 'profit' : 'loss'}">${formatProfit(crPnl)}</td>
+        </tr>`);
+      }
+      if (!rows.length) {
+        const msg = currentRun ? 'No completed sessions yet.' : 'No sessions match filters';
+        rows = [`<tr><td colspan="7" class="loading">${escapeHtml(msg)}</td></tr>`];
+      }
+      tbody.innerHTML = rows.join('');
+
+      const forCharts = [...(currentRun ? [{
+        run_id: 'current',
+        pnl: parseFloat(currentRun.cumulative_pnl_usdc || currentRun.state?.cumulative_pnl_usdc) || 0,
+        trades: (currentRun.trades || []).filter(t => (t.won || '').toLowerCase() in { win: 1, loss: 1 }).length,
+      }] : []), ...sessions];
+      renderSessionsCharts(forCharts);
+      document.getElementById('last-update').textContent = 'Last updated: ' + new Date().toLocaleString();
+    }
+
+    function applyFilters() {
+      refresh();
+    }
+
+    async function refreshStatus() {
+      try {
+        const r = await fetch(API + '/status');
+        const data = await r.json().catch(() => ({}));
+        if (r.ok) renderActive(data);
+      } catch (_) {}
+    }
+
+    async function refresh() {
+      try {
+        const [sessR, statusR] = await Promise.all([
+          fetch(apiUrl(), { cache: 'no-store' }),
+          fetch(API + '/status')
+        ]);
+        const sessData = await sessR.json().catch(() => ({}));
+        const statusData = await statusR.json().catch(() => ({}));
+        if (!sessR.ok) {
+          document.getElementById('sessions-body').innerHTML = '<tr><td colspan="7" class="error">' + escapeHtml(sessData.error || 'API error') + '</td></tr>';
+          return;
+        }
+        allSessions = sessData.sessions || [];
+        currentRun = sessData.current_run || null;
+        renderActive(statusData);
+        renderCurrentRun(currentRun);
+        renderTable(filterSessions());
+      } catch (e) {
+        document.getElementById('sessions-body').innerHTML = '<tr><td colspan="7" class="error">Failed to load: ' + escapeHtml(e.message) + '</td></tr>';
+      }
+    }
+
+    refresh();
+    setInterval(refreshStatus, 3000);
+    setInterval(refresh, 10000);
+  </script>
+</body>
+</html>
