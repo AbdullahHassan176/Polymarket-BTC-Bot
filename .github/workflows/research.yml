@@ -1,0 +1,30 @@
+name: Research smoke
+
+on:
+  push:
+    paths:
+      - "**.py"
+      - ".github/workflows/research.yml"
+      - "research/**"
+  pull_request:
+    paths:
+      - "**.py"
+      - ".github/workflows/research.yml"
+      - "research/**"
+
+jobs:
+  backtest-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Deterministic backtest
+        run: python backtest.py --synthetic-bars 3000
+      - name: Agent-style experiment log
+        run: python run_research_agent.py --params research/research_params.example.json --out logs/experiments_ci.csv
+      - name: Quick param sweep
+        run: python run_param_sweep.py --quick --synthetic-bars 3000 --train-frac 0.7 --out logs/sweep_ci.csv

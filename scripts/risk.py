@@ -30,6 +30,7 @@ DEFAULT_STATE: dict = {
     "daily_trades":              0,      # Bets placed today
     "daily_pnl_usdc":            0.0,    # Running P&L in USDC today (can be negative)
     "cumulative_pnl_usdc":       0.0,    # All-time P&L (for compounding; not reset at midnight)
+    "recent_trade_pnls":         [],     # Last N closed trade PnLs (rolling stop)
     "starting_balance_usdc":     0.0,    # Starting capital at session start (for tracking)
     "last_traded_condition_id":  "",     # One trade per window: skip re-entry in same window
     "last_reset_date":           "",     # UTC date of last daily counter reset
@@ -166,6 +167,19 @@ class RiskManager:
                 f"daily loss limit hit (${pnl_today:.2f} loss, limit=${config.MAX_DAILY_LOSS_USDC})"
             )
 
+        if getattr(config, "ROLLING_STOP_ENABLED", False):
+            lst = self.state.get("recent_trade_pnls") or []
+            need = getattr(config, "ROLLING_STOP_MIN_TRADES", 12)
+            cap = getattr(config, "ROLLING_WINDOW_TRADES", 20)
+            thr = getattr(config, "ROLLING_STOP_MAX_LOSS_USDC", -15.0)
+            if len(lst) >= need:
+                window = lst[-cap:] if cap > 0 else lst
+                s = sum(window)
+                if s <= thr:
+                    return False, (
+                        f"rolling stop: sum last {len(window)} trade PnLs ${s:.2f} <= ${thr}"
+                    )
+
         return True, "ok"
 
     # -----------------------------------------------------------------------
@@ -261,6 +275,13 @@ class RiskManager:
             self.state["cumulative_pnl_usdc"] = round(
                 self.state.get("cumulative_pnl_usdc", 0.0) + pnl_usdc, 4
             )
+        if getattr(config, "ROLLING_STOP_ENABLED", False):
+            lst = list(self.state.get("recent_trade_pnls") or [])
+            lst.append(round(float(pnl_usdc), 4))
+            cap = getattr(config, "ROLLING_WINDOW_TRADES", 20)
+            if cap > 0:
+                lst = lst[-cap:]
+            self.state["recent_trade_pnls"] = lst
         self._save()
         starting = self.state.get("starting_balance_usdc", 0) or config.BANKROLL_START_USDC
         cumulative = self.state["cumulative_pnl_usdc"]

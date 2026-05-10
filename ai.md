@@ -16,9 +16,10 @@ scripts/bot.py -> polymarket_client, data, strategy, execution, risk
 ```
 
 ## Directory Structure
-Root: .bat launchers + .env. Python in `scripts/`. See `docs/STRUCTURE.md`.
+Root: .bat launchers + .env. Python in `scripts/`. **Research (repo root)**: `backtest.py`, `run_param_sweep.py`, `run_research_agent.py`, `summarize_attribution.py`, `paper_report.py`, `sweep_optuna.py` — import `scripts/` via `research/path_setup.py`. See `docs/RESEARCH_AUTOMATION.md`.
 ```
 ├── start_bot.bat, stop_bot.bat, restart_bot.bat, bot_status.bat, watch_bot.bat, dashboard_bot.bat
+├── backtest.py, run_param_sweep.py, run_research_agent.py   # backtest + sweeps (root)
 ├── dashboard/
 │   ├── server.py, index.html, sessions.html   # aiohttp + Chart.js (like Oracle bot)
 ├── scripts/
@@ -108,3 +109,4 @@ python scripts/analyze_tier_performance.py --csv logs/trades_12hr_reversal.csv
 - **No entry in last 60s**: `ENTRY_MIN_SECS_REMAINING=60` — never place new orders when &lt; 60s left. **Entry only in first 120s**: `ENTRY_MAX_ELAPSED_SECS=120` — allow buys only in the first 2 minutes of each 5-min window (enough for reversals).
 - **Global EV gate**: Optional profitability gate in `bot.py` (`MODEL_EV_GATE_ENABLED`) blocks entries unless model-implied net edge clears cost buffer: `model_prob(direction) - entry_price - MODEL_EV_COST_BUFFER >= MODEL_EV_MIN_EDGE`.
 - **ML direction model**: Optional sklearn RF or Bi-LSTM for P(UP). Backfill: `python scripts/ml/backfill_training_data.py --windows 600`. Train: `python scripts/ml/train_direction_model.py --backfill logs/ml_training_backfill.csv` or `python scripts/ml/train_lstm_model.py --candles 500`. Set `MODEL_USE_ML=True`. ETH cross-asset feature supported. See `docs/ML_IMPROVEMENTS_FROM_RESEARCH.md`.
+- **Walk-forward / sweeps**: `python backtest.py --synthetic-bars 8000`; `python run_param_sweep.py --quick`; `python run_research_agent.py --params research/research_params.example.json`. **Rolling stop** (pause after cold streak): `ROLLING_STOP_*` in `scripts/config.py`. **Attribution**: `python summarize_attribution.py`. Index: `docs/RESEARCH_AUTOMATION.md`.

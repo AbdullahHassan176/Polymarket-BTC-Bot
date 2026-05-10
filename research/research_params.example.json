@@ -1,0 +1,17 @@
+{
+  "description": "Copy to research_params.json. Run: python run_research_agent.py --params research/research_params.json",
+  "config_overrides": {
+    "STRATEGY_MODE": "hybrid",
+    "FALLBACK_IBS_LOW": 0.2,
+    "FALLBACK_IBS_HIGH": 0.8
+  },
+  "backtest": {
+    "synthetic_bars": 8000,
+    "days": 7,
+    "csv": "",
+    "train_frac": 0.7,
+    "eval_sec": 60,
+    "synth_k": 45.0,
+    "size_usdc": 1.0
+  }
+}

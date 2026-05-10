@@ -156,6 +156,49 @@ def _parse_candles(raw: list) -> pd.DataFrame:
     return df
 
 
+def fetch_historical_1m_candles(days: float, max_bars: int = 50_000) -> pd.DataFrame:
+    """
+    Fetch approximately `days` of 1-minute OKX candles (oldest first).
+
+    Paginates backward using OKX history-candles `before` (ms). Public API.
+    """
+    target_bars = min(int(days * 24 * 60) + 60, max_bars)
+    chunks: list[pd.DataFrame] = []
+    before_ms: Optional[int] = None
+    remaining = target_bars
+    prev_oldest_ts = None
+
+    while remaining > 0:
+        lim = min(100, remaining)
+        chunk = fetch_candles_history(
+            inst_id=config.SPOT_TICKER,
+            bar="1m",
+            limit=lim,
+            before_ms=before_ms,
+        )
+        if chunk.empty:
+            break
+
+        oldest_ts = chunk.iloc[0]["ts"]
+        if prev_oldest_ts is not None and oldest_ts >= prev_oldest_ts:
+            break
+        prev_oldest_ts = oldest_ts
+
+        chunks.append(chunk)
+        remaining -= len(chunk)
+        before_ms = int(oldest_ts.timestamp() * 1000) - 1
+
+        if len(chunk) < lim:
+            break
+
+    if not chunks:
+        return pd.DataFrame()
+
+    full = pd.concat(reversed(chunks), ignore_index=True)
+    full = full.drop_duplicates(subset=["ts"]).sort_values("ts").reset_index(drop=True)
+    return full
+
+
 def _generate_synthetic_candles(limit: int, base_price: float = 70_000.0) -> pd.DataFrame:
     """
     Generate synthetic BTC-like candles for offline testing.

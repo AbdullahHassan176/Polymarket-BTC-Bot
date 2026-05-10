@@ -152,6 +152,12 @@ CHEAP_ENTRY_HOLD_TO_RESOLUTION_THRESHOLD: float = 0.10
 # One trade per 5-min window (no re-entry in same window after TP/SL).
 ONE_TRADE_PER_WINDOW: bool = True
 
+# Rolling stop: pause new entries when sum of last N trade PnLs is too negative.
+ROLLING_STOP_ENABLED: bool = False
+ROLLING_WINDOW_TRADES: int = 20
+ROLLING_STOP_MIN_TRADES: int = 12
+ROLLING_STOP_MAX_LOSS_USDC: float = -15.0
+
 # If we can't get bid (404) and market end was this many seconds ago, force-clear position
 # to avoid blocking new trades. Prevents stuck bot when CLOB removes expired tokens.
 # 300s (5 min) gives Gamma enough time to publish outcomePrices/winners before we give up.
