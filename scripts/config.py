@@ -20,7 +20,7 @@ load_dotenv(os.path.join(_root, ".env"))
 
 # Master switch. Must be True to place real orders on Polymarket.
 # Leave False during paper testing - the bot logs "PAPER" instead of ordering.
-REAL_TRADING: bool = True
+REAL_TRADING: bool = False
 
 # Auto-redeem winning positions to USDC for reinvestment (real mode only).
 # Uses polymarket-apis. Requires POL for gas (EOA).
@@ -153,10 +153,10 @@ CHEAP_ENTRY_HOLD_TO_RESOLUTION_THRESHOLD: float = 0.10
 ONE_TRADE_PER_WINDOW: bool = True
 
 # Rolling stop: pause new entries when sum of last N trade PnLs is too negative.
-ROLLING_STOP_ENABLED: bool = False
+ROLLING_STOP_ENABLED: bool = True
 ROLLING_WINDOW_TRADES: int = 20
-ROLLING_STOP_MIN_TRADES: int = 12
-ROLLING_STOP_MAX_LOSS_USDC: float = -15.0
+ROLLING_STOP_MIN_TRADES: int = 5
+ROLLING_STOP_MAX_LOSS_USDC: float = -35.0
 
 # If we can't get bid (404) and market end was this many seconds ago, force-clear position
 # to avoid blocking new trades. Prevents stuck bot when CLOB removes expired tokens.
@@ -177,31 +177,31 @@ RESOLUTION_POLL_INTERVAL_SECS: int = 30
 # ---------------------------------------------------------------------------
 
 # Maximum USDC to risk on a single 5-minute bet (hard cap).
-# Scaled 15/50 for $15 bankroll test (from base $50).
-RISK_PER_TRADE_USDC: float = 3.0
+RISK_PER_TRADE_USDC: float = 10.0
 # Optional: lower cap for non-BTC assets (ETH, SOL, etc.). Unset or 0 = use RISK_PER_TRADE_USDC.
 RISK_PER_TRADE_ALT_USDC: float = 0.0
 
 # Stop trading for the day if cumulative losses exceed this amount.
-MAX_DAILY_LOSS_USDC: float = 7.5
+# ~4 losing $10 trades before halt (tune to your wallet).
+MAX_DAILY_LOSS_USDC: float = 40.0
 
 # Maximum number of bets per calendar day (UTC).
 MAX_TRADES_PER_DAY: int = 1000
 
-# Max concurrent open positions (one per market). Allows entering new window while waiting
-# for previous trades to resolve, avoiding missed opportunities.
-MAX_CONCURRENT_POSITIONS: int = 3
+# Max concurrent open positions (one per market). Set to 1 for small bankrolls so you
+# never stack multiple $10 positions across overlapping 5m windows.
+MAX_CONCURRENT_POSITIONS: int = 1
 
 # ---------------------------------------------------------------------------
 # COMPOUNDING (reinvest profits for controlled growth)
 # ---------------------------------------------------------------------------
 
-# Starting capital for position sizing. Paper: virtual bankroll. Real: can match wallet.
-# Updated to match actual on-chain USDC balance as of 2026-03-19.
-BANKROLL_START_USDC: float = 354.0
+# Starting capital for position sizing / dashboard. Set near your funded USDC on Polymarket.
+BANKROLL_START_USDC: float = 10.0
 
-# When True, trade size = BANKROLL_START + cumulative_pnl, scaled by RISK_PCT_PER_TRADE, clamped to [MIN_TRADE_USDC, RISK_PER_TRADE_USDC].
-COMPOUNDING_ENABLED: bool = True
+# When False, every trade uses RISK_PER_TRADE_USDC (fixed stake). Enable after you size
+# bankroll and want %-of-equity sizing again.
+COMPOUNDING_ENABLED: bool = False
 
 # Fraction of current equity to risk per trade when compounding (e.g. 0.10 = 10%).
 RISK_PCT_PER_TRADE: float = 0.10
@@ -217,7 +217,8 @@ MIN_TRADE_USDC: float = 0.50
 # "momentum"   = EMA breakout + follow trend (original).
 # "contrarian" = buy cheap side when mean reversion.
 # "hybrid"     = reversal (if enabled) -> contrarian -> momentum -> fallback.
-STRATEGY_MODE: str = "ml_v2"
+# hybrid = reversal/contrarian/momentum without ML artifacts. Use ml_v2 after `train_v2` models exist.
+STRATEGY_MODE: str = "hybrid"
 
 # ---------------------------------------------------------------------------
 # ML V2 — LightGBM + XGBoost ensemble (hold-to-expiry, no spread cost on exit)

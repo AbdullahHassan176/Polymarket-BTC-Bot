@@ -1,7 +1,7 @@
 """
 Watchdog for BTC 5m bot - keeps the bot running indefinitely with auto-restart.
 
-- Runs scripts/bot.py --paper (or scripts/run_12hr_reversal.py via BOT_SCRIPT env)
+- Runs scripts/bot.py; mode from env BOT_ARGS (e.g. --paper or --real, default --real).
 - Appends session rows to logs/btc_sessions.csv
 - Run via: start_bot.bat  |  Stop via: stop_bot.bat
 """

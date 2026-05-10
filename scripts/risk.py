@@ -194,25 +194,25 @@ class RiskManager:
         For non-BTC assets, cap can be lower if RISK_PER_TRADE_ALT_USDC is set.
 
         If half_kelly is provided (ml_v2 strategy), Kelly sizing overrides the fixed pct:
-        size = equity * min(half_kelly, ML_V2_KELLY_MAX_FRACTION).
-        The dollar cap becomes equity * ML_V2_KELLY_MAX_FRACTION (not RISK_PER_TRADE_USDC).
+        size = equity * min(half_kelly, ML_V2_KELLY_MAX_FRACTION), then clamped to
+        [MIN_TRADE_USDC, RISK_PER_TRADE_USDC] (and RISK_PER_TRADE_ALT_USDC for non-BTC).
         """
         bankroll = getattr(config, "BANKROLL_START_USDC", 50.0)
         cumulative = self.state.get("cumulative_pnl_usdc", 0.0)
         equity = bankroll + cumulative
         min_size = getattr(config, "MIN_TRADE_USDC", 1.0)
 
-        if half_kelly is not None and half_kelly > 0:
-            kelly_max = getattr(config, "ML_V2_KELLY_MAX_FRACTION", 0.10)
-            frac = min(half_kelly, kelly_max)
-            size = equity * frac
-            size = max(min_size, size)
-            return round(size, 2)
-
         max_cap = config.RISK_PER_TRADE_USDC
         alt_cap = getattr(config, "RISK_PER_TRADE_ALT_USDC", 0.0)
         if alt_cap > 0 and getattr(config, "TRADING_ASSET", "BTC") != "BTC":
             max_cap = min(max_cap, alt_cap)
+
+        if half_kelly is not None and half_kelly > 0:
+            kelly_max = getattr(config, "ML_V2_KELLY_MAX_FRACTION", 0.10)
+            frac = min(half_kelly, kelly_max)
+            size = equity * frac
+            size = max(min_size, min(max_cap, size))
+            return round(size, 2)
         if not getattr(config, "COMPOUNDING_ENABLED", False):
             return round(max_cap, 2)
         pct = getattr(config, "RISK_PCT_PER_TRADE", 0.10)
